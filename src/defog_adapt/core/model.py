@@ -1,0 +1,1367 @@
+"""
+DeFoG Model - Main LightningModule for discrete flow matching graph generation.
+
+This module provides the main model class that integrates all components:
+- Training: Learn to predict clean graph marginals from noisy inputs
+- Sampling: Generate graphs via CTMC denoising with configurable parameters
+
+Example:
+    >>> from defog_adapt.core import DeFoGModel
+    >>> model = DeFoGModel(
+    ...     num_node_classes=4,
+    ...     num_edge_classes=2,
+    ...     n_layers=6,
+    ... )
+    >>> trainer = pl.Trainer(max_epochs=100)
+    >>> trainer.fit(model, train_dataloader)
+    >>> samples = model.sample(num_samples=100)
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch_lightning as pl
+from torch_geometric.data import Data, Batch
+from tqdm import tqdm
+from typing import Callable, Dict, List, Optional, Tuple, Union
+
+from .data import PlaceHolder, to_dense, dense_to_pyg, DistributionNodes
+from .size_distribution import (
+    SizeDistribution,
+    EmpiricalSizeDistribution,
+    FixedSizeDistribution,
+    ExplicitSizeDistribution,
+)
+from .transformer import GraphTransformer
+from .features import ExtraFeatures, MolecularFeatures
+from .noise import LimitDistribution, sample_noise, sample_from_probs
+from .rate_matrix import RateMatrixDesigner
+from .time_distortion import TimeDistorter
+from .loss import TrainLoss
+
+
+class DeFoGModel(pl.LightningModule):
+    """
+    Discrete Flow Matching for Graph Generation.
+
+    A PyTorch Lightning module implementing the DeFoG model for generating
+    discrete graphs. The model learns to predict clean graph marginals from
+    noisy inputs during training, and generates graphs via CTMC denoising
+    at sampling time.
+
+    Supports optional conditioning via a continuous vector and classifier-free
+    guidance (CFG) for improved conditional generation quality.
+
+    Args:
+        num_node_classes: Number of node feature classes
+        num_edge_classes: Number of edge feature classes (including no-edge)
+        n_layers: Number of transformer layers (default: 6)
+        hidden_dim: Hidden dimension for transformer (default: 256)
+        hidden_mlp_dim: Hidden dimension for MLPs (default: 512)
+        n_heads: Number of attention heads (default: 8)
+        dropout: Dropout probability (default: 0.1)
+        noise_type: Type of noise distribution - "uniform", "marginal", or "absorbing"
+        node_marginals: Prior marginals for nodes (required if noise_type="marginal")
+        edge_marginals: Prior marginals for edges (required if noise_type="marginal")
+        node_counts: Tensor of node count frequencies for sampling graph sizes
+        max_nodes: Maximum number of nodes in graphs (default: 100)
+        extra_features_type: Type of extra features - "none", "rrwp", or "cycles"
+        rrwp_steps: Number of RRWP random walk steps (default: 10)
+        lr: Learning rate (default: 1e-4)
+        weight_decay: Weight decay for optimizer (default: 1e-5)
+        lambda_edge: Weight for edge loss (default: 1.0)
+        train_time_distortion: Time distortion for training (default: "identity")
+        sample_steps: Number of sampling steps (default: 100)
+        eta: Stochasticity parameter for sampling (default: 0.0)
+        omega: Target guidance strength for sampling (default: 0.0)
+        sample_time_distortion: Time distortion for sampling (default: "identity")
+        cond_dim: Dimension of the conditioning vector (default: 0, unconditional).
+            Conditions are expected to be already normalized by the caller.
+        cond_emb_dim: Width of the learned condition embedding (default: 64).
+            Only used when cond_dim > 0.
+        cond_hidden_dim: Hidden width of the condition encoder MLP (default: 128).
+            Only used when cond_dim > 0.
+        cond_drop_prob: Probability of dropping the condition during training
+            for classifier-free guidance (default: 0.1)
+        guidance_scale: Default guidance scale for CFG sampling (default: 2.0).
+            1.0 = purely conditional, >1.0 = amplified conditioning.
+
+    Example:
+        >>> model = DeFoGModel(
+        ...     num_node_classes=4,
+        ...     num_edge_classes=2,
+        ...     node_counts=torch.tensor([0, 0.1, 0.3, 0.4, 0.2]),  # 2-4 nodes
+        ... )
+        >>> # Training
+        >>> trainer = pl.Trainer(max_epochs=100)
+        >>> trainer.fit(model, train_dataloader)
+        >>> # Sampling
+        >>> samples = model.sample(num_samples=10)
+    """
+
+    def __init__(
+        self,
+        # Required dimensions
+        num_node_classes: int,
+        num_edge_classes: int,
+        # Architecture
+        n_layers: int = 6,
+        hidden_dim: int = 256,
+        hidden_mlp_dim: int = 512,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+        # Noise distribution
+        noise_type: str = "uniform",
+        node_marginals: Optional[torch.Tensor] = None,
+        edge_marginals: Optional[torch.Tensor] = None,
+        # Graph sizes (for sampling)
+        node_counts: Optional[torch.Tensor] = None,
+        max_nodes: int = 100,
+        # Extra features
+        extra_features_type: str = "rrwp",
+        rrwp_steps: int = 10,
+        # Molecular domain features (per-atom charge/valency + molecular weight)
+        molecular_features: bool = False,
+        atom_valencies: Optional[list] = None,
+        atom_weights: Optional[list] = None,
+        max_atom_weight: float = 350.0,
+        max_atom_valency: float = 12.0,
+        # Training
+        lr: float = 1e-4,
+        weight_decay: float = 1e-5,
+        lambda_edge: float = 1.0,
+        train_time_distortion: str = "identity",
+        lr_scheduler: Optional[str] = None,
+        lr_min: float = 1e-6,
+        # Sampling defaults
+        sample_steps: int = 100,
+        eta: float = 0.0,
+        omega: float = 0.0,
+        sample_time_distortion: str = "identity",
+        rdb: str = "general",  # detailed-balance design (authors use "general")
+        # Conditioning / classifier-free guidance
+        cond_dim: int = 0,
+        cond_emb_dim: int = 64,
+        cond_hidden_dim: int = 128,
+        cond_drop_prob: float = 0.1,
+        guidance_scale: float = 2.0,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Store dimensions
+        self.num_node_classes = num_node_classes
+        self.num_edge_classes = num_edge_classes
+        self.max_nodes = max_nodes
+
+        # Store training params
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.lr_scheduler = lr_scheduler
+        self.lr_min = lr_min
+
+        # Store sampling params
+        self.sample_steps = sample_steps
+        self.eta = eta
+        self.omega = omega
+        self.sample_time_distortion = sample_time_distortion
+
+        # Store conditioning params
+        self.cond_dim = cond_dim
+        self.cond_emb_dim = cond_emb_dim
+        self.cond_hidden_dim = cond_hidden_dim
+        self.cond_drop_prob = cond_drop_prob
+        self.guidance_scale = guidance_scale
+
+        # Create limit distribution
+        self.limit_dist = LimitDistribution(
+            noise_type=noise_type,
+            num_node_classes=num_node_classes,
+            num_edge_classes=num_edge_classes,
+            node_marginals=node_marginals,
+            edge_marginals=edge_marginals,
+        )
+
+        # Get actual dimensions (may include virtual class for absorbing)
+        actual_node_classes = self.limit_dist.num_node_classes
+        actual_edge_classes = self.limit_dist.num_edge_classes
+
+        # Create node distribution for sampling
+        if node_counts is not None:
+            self.node_dist = DistributionNodes(node_counts)
+        else:
+            # Default: uniform over 2-20 nodes
+            counts = torch.zeros(max_nodes + 1)
+            counts[2:21] = 1.0
+            self.node_dist = DistributionNodes(counts)
+
+        # Default (marginal) size distribution used when sample() is called
+        # without an explicit size_dist or num_nodes override.
+        self.default_size_dist = EmpiricalSizeDistribution(self.node_dist.prob)
+
+        # Create extra features
+        self.extra_features = ExtraFeatures(
+            feature_type=extra_features_type,
+            rrwp_steps=rrwp_steps,
+            max_nodes=max_nodes,
+        )
+        extra_dims = self.extra_features.output_dims()
+
+        # Optional molecular domain features (charge/valency into X, weight into y)
+        self.mol_features = None
+        mol_dims = {"X": 0, "E": 0, "y": 0}
+        if molecular_features and atom_valencies is not None and atom_weights is not None:
+            self.mol_features = MolecularFeatures(
+                valencies=atom_valencies, atom_weights=atom_weights,
+                max_weight=max_atom_weight, max_valency=max_atom_valency,
+            )
+            mol_dims = self.mol_features.output_dims()
+
+        # Compute input/output dimensions
+        # Input: node/edge classes + extra features + time + condition embedding
+        cond_y_dim = cond_emb_dim if cond_dim > 0 else 0
+        self.input_dims = {
+            "X": actual_node_classes + extra_dims["X"] + mol_dims["X"],
+            "E": actual_edge_classes + extra_dims["E"] + mol_dims["E"],
+            "y": cond_y_dim + 1 + extra_dims["y"] + mol_dims["y"],  # cond emb + time + extra + mol
+        }
+        self.output_dims = {
+            "X": actual_node_classes,
+            "E": actual_edge_classes,
+            "y": 0,
+        }
+
+        # Create transformer
+        self.model = GraphTransformer(
+            n_layers=n_layers,
+            input_dims=self.input_dims,
+            hidden_mlp_dims={"X": hidden_mlp_dim, "E": hidden_mlp_dim // 2, "y": hidden_mlp_dim},
+            hidden_dims={
+                "dx": hidden_dim,
+                "de": hidden_dim // 4,
+                "dy": hidden_dim // 4,
+                "n_head": n_heads,
+                "dim_ffX": hidden_dim * 2,
+                "dim_ffE": hidden_dim // 2,
+            },
+            output_dims=self.output_dims,
+            dropout=dropout,
+        )
+
+        # Create loss function
+        self.train_loss = TrainLoss(lambda_edge=lambda_edge)
+
+        # Create time distorter
+        self.time_distorter = TimeDistorter(
+            train_distortion=train_time_distortion,
+            sample_distortion=sample_time_distortion,
+        )
+
+        # Create rate matrix designer
+        self.rdb = rdb
+        self.rate_matrix_designer = RateMatrixDesigner(
+            eta=eta,
+            omega=omega,
+            rdb=rdb,
+            limit_dist=self.limit_dist,
+        )
+
+        # Conditioning modules (classifier-free guidance).
+        # The condition is projected into an embedding space; a learned null
+        # embedding represents the "unconditional" case (dropout / CFG uncond
+        # branch). Both the encoder output and the null are passed through a
+        # shared LayerNorm so they live on the same manifold.
+        if cond_dim > 0:
+            self.cond_encoder = nn.Sequential(
+                nn.Linear(cond_dim, cond_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(cond_hidden_dim, cond_emb_dim),
+            )
+            self.cond_norm = nn.LayerNorm(cond_emb_dim)
+            self.null_embedding = nn.Parameter(torch.randn(cond_emb_dim))
+
+    def forward(
+        self,
+        noisy_data: Dict[str, torch.Tensor],
+        extra_data: PlaceHolder,
+        node_mask: torch.Tensor,
+        cond_modulation=None,
+    ) -> PlaceHolder:
+        """
+        Forward pass through the transformer.
+
+        Args:
+            noisy_data: Dict with "X_t", "E_t", "y_t", "t", "node_mask"
+            extra_data: PlaceHolder with extra features
+            node_mask: Boolean mask (bs, n)
+            cond_modulation: Optional per-layer gated-FiLM Modulation from a
+                frozen-base adapter (see defog_adapt.core.adapter). None -> unchanged.
+
+        Returns:
+            PlaceHolder with predicted marginals
+        """
+        X = torch.cat((noisy_data["X_t"], extra_data.X), dim=2).float()
+        E = torch.cat((noisy_data["E_t"], extra_data.E), dim=3).float()
+        y = torch.hstack((noisy_data["y_t"], extra_data.y)).float()
+        return self.model(X, E, y, node_mask, modulation=cond_modulation)
+
+    def training_step(self, batch: Batch, batch_idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Training step for a batch of PyG graphs.
+
+        Args:
+            batch: PyG Batch object
+            batch_idx: Batch index
+
+        Returns:
+            Dict with "loss" key
+        """
+        if batch.edge_index.numel() == 0:
+            return None
+
+        # Convert PyG batch to dense tensors
+        dense_data, node_mask = to_dense(
+            batch.x,
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch,
+        )
+        dense_data = dense_data.mask(node_mask)
+        X, E = dense_data.X, dense_data.E
+        bs = X.size(0)
+
+        # Build conditioning embedding y
+        if self.cond_dim > 0:
+            if hasattr(batch, 'y') and batch.y is not None:
+                cond_raw = batch.y
+            else:
+                cond_raw = None
+
+            # Per-sample CFG dropout: replace condition with the null embedding
+            drop_mask = torch.rand(bs, device=X.device) < self.cond_drop_prob
+            if cond_raw is None:
+                # No labels available: treat the whole batch as unconditional
+                y = self._embed_condition(None, bs=bs, device=X.device)
+                drop_mask = torch.ones(bs, dtype=torch.bool, device=X.device)
+            else:
+                y = self._embed_condition(cond_raw, drop_mask=drop_mask)
+
+            # Monitor CFG collapse: distance between the null embedding and the
+            # mean of the (non-dropped) conditional embeddings. Trending to 0
+            # means the conditional and unconditional branches are converging.
+            kept = ~drop_mask
+            if kept.any():
+                null_vec = self.cond_norm(self.null_embedding)
+                mean_kept = y[kept].mean(dim=0)
+                self.log("train/cond_null_dist", (null_vec - mean_kept).norm())
+        else:
+            y = torch.zeros(bs, 0, device=X.device)
+
+        # Apply noise
+        noisy_data = self._apply_noise(X, E, y, node_mask)
+
+        # Compute extra features
+        extra_data = self._compute_extra_data(noisy_data)
+
+        # Forward pass
+        pred = self.forward(noisy_data, extra_data, node_mask)
+
+        # Compute loss
+        loss = self.train_loss(
+            pred_X=pred.X,
+            pred_E=pred.E,
+            pred_y=pred.y,
+            true_X=X,
+            true_E=E,
+            true_y=y,
+            node_mask=node_mask,
+        )
+
+        # Log both the per-step loss (handy in the progress bar) and the
+        # epoch-aggregated mean. Monitoring/plotting should use the epoch mean:
+        # a single training step is a high-variance estimate because each graph
+        # draws its own random flow-matching time t.
+        self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        return {
+            "loss": loss,
+            "_pred_X": pred.X.detach(),
+            "_pred_E": pred.E.detach(),
+            "_true_X": X.detach(),
+            "_true_E": E.detach(),
+            "_node_mask": node_mask.detach(),
+            "_t": noisy_data["t"].detach(),
+        }
+
+    def validation_step(self, batch: Batch, batch_idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Validation step for a batch of PyG graphs.
+
+        Same as training_step but without CFG dropout, providing a clean
+        validation signal.
+
+        Args:
+            batch: PyG Batch object
+            batch_idx: Batch index
+
+        Returns:
+            Dict with "val_loss" key
+        """
+        if batch.edge_index.numel() == 0:
+            return None
+
+        # Convert PyG batch to dense tensors
+        dense_data, node_mask = to_dense(
+            batch.x,
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch,
+        )
+        dense_data = dense_data.mask(node_mask)
+        X, E = dense_data.X, dense_data.E
+        bs = X.size(0)
+
+        # Build conditioning embedding y (no CFG dropout for validation)
+        if self.cond_dim > 0:
+            if hasattr(batch, 'y') and batch.y is not None:
+                y = self._embed_condition(batch.y)
+            else:
+                y = self._embed_condition(None, bs=bs, device=X.device)
+        else:
+            y = torch.zeros(bs, 0, device=X.device)
+
+        # Apply noise
+        noisy_data = self._apply_noise(X, E, y, node_mask)
+
+        # Compute extra features
+        extra_data = self._compute_extra_data(noisy_data)
+
+        # Forward pass
+        pred = self.forward(noisy_data, extra_data, node_mask)
+
+        # Compute loss
+        loss = self.train_loss(
+            pred_X=pred.X,
+            pred_E=pred.E,
+            pred_y=pred.y,
+            true_X=X,
+            true_E=E,
+            true_y=y,
+            node_mask=node_mask,
+        )
+
+        self.log("val/loss", loss, prog_bar=True, sync_dist=True)
+        return {"val_loss": loss}
+
+    def configure_optimizers(self):
+        """Configure AdamW optimizer, optionally with a cosine LR schedule."""
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.lr,
+            amsgrad=True,
+            weight_decay=self.weight_decay,
+        )
+        if self.lr_scheduler == "cosine":
+            t_max = self.trainer.max_epochs if self.trainer is not None else 250
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=t_max, eta_min=self.lr_min
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
+            }
+        return optimizer
+
+    def _resolve_size_dist(
+        self,
+        size_dist: Optional[SizeDistribution],
+        num_nodes: Optional[Union[int, torch.Tensor]],
+    ) -> SizeDistribution:
+        """
+        Resolve which SizeDistribution to use for a sampling call.
+
+        Precedence: an explicit ``size_dist`` wins; otherwise ``num_nodes`` is
+        converted into an ad-hoc distribution (int -> fixed, tensor/sequence ->
+        explicit per-sample); otherwise the model's default marginal is used.
+        """
+        if size_dist is not None:
+            return size_dist
+        if num_nodes is None:
+            return self.default_size_dist
+        if isinstance(num_nodes, int):
+            return FixedSizeDistribution(num_nodes)
+        return ExplicitSizeDistribution(num_nodes)
+
+    def _prepare_generation(
+        self,
+        num_samples: int,
+        num_nodes: Optional[Union[int, torch.Tensor]],
+        size_dist: Optional[SizeDistribution],
+        condition: Optional[torch.Tensor],
+        guidance_scale: float,
+        device: torch.device,
+    ):
+        """
+        Resolve graph sizes, build the node mask, sample the initial noise, and
+        build the conditioning embedding for one generation run.
+
+        Extracted verbatim from sample() so external orchestrators (Sampler and
+        the inpainting sampler) share the exact same initialization instead of
+        duplicating it.
+
+        Returns:
+            (node_mask, n_nodes, X, E, y, y_raw, use_cfg)
+        """
+        # Resolve graph sizes -> node mask.
+        size_dist = self._resolve_size_dist(size_dist, num_nodes)
+        n_nodes = size_dist.sample(num_samples, condition=condition, device=device)
+        n_nodes = n_nodes.clamp(1, self.max_nodes).long()
+        n_max = int(n_nodes.max().item())
+
+        arange = torch.arange(n_max, device=device).unsqueeze(0).expand(num_samples, -1)
+        node_mask = arange < n_nodes.unsqueeze(1)
+
+        # Initial noise from the limit distribution.
+        z_T = sample_noise(self.limit_dist, node_mask)
+        X, E = z_T.X, z_T.E
+
+        # Conditioning embedding (y is threaded through the network; y_raw is the
+        # original condition attached to the output graphs).
+        y, y_raw, use_cfg = self._prepare_condition(
+            num_samples, condition, guidance_scale, device
+        )
+
+        return node_mask, n_nodes, X, E, y, y_raw, use_cfg
+
+    def _prepare_condition(
+        self,
+        num_samples: int,
+        condition: Optional[torch.Tensor],
+        guidance_scale: float,
+        device: torch.device,
+    ):
+        """Build the conditioning embedding for one generation run.
+
+        Returns ``(y, y_raw, use_cfg)``: ``y`` is the network-threaded embedding,
+        ``y_raw`` the original condition attached to output graphs (``None`` when
+        unconditional), and ``use_cfg`` whether classifier-free guidance is active.
+
+        Factored out of :meth:`_prepare_generation` so orchestrators that build
+        their own initial state (e.g. the refinement sampler, which seeds from a
+        guess graph instead of fresh noise) reuse the exact same conditioning
+        logic instead of duplicating it.
+        """
+        use_cfg = False
+        y_raw = None
+        if self.cond_dim > 0:
+            if condition is not None:
+                cond_raw = condition.to(device).float()
+                if cond_raw.dim() == 1:
+                    cond_raw = cond_raw.unsqueeze(-1)
+                cond_raw = cond_raw[:, :self.cond_dim]
+                y_raw = cond_raw
+                y = self._embed_condition(cond_raw)
+                use_cfg = (guidance_scale != 1.0)
+            else:
+                y = self._embed_condition(None, bs=num_samples, device=device)
+        else:
+            y = torch.zeros(num_samples, 0, device=device)
+        return y, y_raw, use_cfg
+
+    @torch.no_grad()
+    def sample(
+        self,
+        num_samples: int,
+        num_nodes: Optional[Union[int, torch.Tensor]] = None,
+        eta: Optional[float] = None,
+        omega: Optional[float] = None,
+        sample_steps: Optional[int] = None,
+        time_distortion: Optional[str] = None,
+        device: Optional[torch.device] = None,
+        show_progress: bool = True,
+        condition: Optional[torch.Tensor] = None,
+        guidance_scale: Optional[float] = None,
+        size_dist: Optional[SizeDistribution] = None,
+        posterior_transform: Optional[Callable] = None,
+    ) -> List[Data]:
+        """
+        Generate graph samples.
+
+        Args:
+            num_samples: Number of graphs to generate
+            num_nodes: Fixed number of nodes (int) or per-sample counts (Tensor).
+                      Convenience shorthand that is internally converted into a
+                      SizeDistribution. Ignored if size_dist is given.
+                      If both are None, uses the model's default (marginal) size
+                      distribution.
+            size_dist: Optional SizeDistribution controlling how many nodes each
+                      graph gets. Overrides num_nodes. Condition-aware
+                      distributions (e.g. ConditionalSizeDistribution) receive
+                      the same `condition` passed here.
+            eta: Stochasticity parameter (overrides default)
+            omega: Target guidance strength (overrides default)
+            sample_steps: Number of sampling steps (overrides default)
+            time_distortion: Time distortion type (overrides default)
+            device: Device to sample on (defaults to model device)
+            show_progress: Whether to show progress bar
+            condition: Conditioning vector of shape (num_samples, cond_dim).
+                      If None and cond_dim > 0, generates unconditionally.
+            guidance_scale: CFG guidance scale (overrides default).
+                           1.0 = purely conditional, >1.0 = amplified conditioning.
+                           Only used when condition is provided.
+
+        Returns:
+            List of PyG Data objects, each containing:
+            - x: Node features (n, num_node_classes) one-hot
+            - edge_index: Edge indices (2, num_edges)
+            - edge_attr: Edge features (num_edges, num_edge_classes) one-hot
+        """
+        # Generation orchestration lives in Sampler (single source of truth for
+        # the denoising loop). This method is a thin, behavior-preserving facade:
+        # it builds a default Sampler with the per-call sampling policy resolved
+        # against the model's own defaults (mirroring the old inline defaulting),
+        # then delegates. Kept because many callers (training callback, eval
+        # scripts) rely on model.sample(...). Local import avoids any module
+        # import-order coupling between model.py and sampler.py.
+        from .sampler import Sampler
+
+        sampler = Sampler(
+            self,
+            eta=eta,
+            omega=omega,
+            sample_steps=sample_steps,
+            time_distortion=time_distortion,
+            guidance_scale=guidance_scale,
+            posterior_transform=posterior_transform,
+        )
+        return sampler.sample(
+            num_samples,
+            num_nodes=num_nodes,
+            size_dist=size_dist,
+            condition=condition,
+            device=device,
+            show_progress=show_progress,
+        )
+
+    def _embed_condition(
+        self,
+        cond_raw: Optional[torch.Tensor],
+        drop_mask: Optional[torch.Tensor] = None,
+        bs: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """
+        Encode a (already-normalized) condition into embedding space.
+
+        A learned null embedding stands in for the unconditional case, used for
+        (a) per-sample CFG dropout during training, (b) sampling without a
+        condition, and (c) the unconditional branch of CFG guidance. The encoder
+        output and the null share a LayerNorm so they lie on the same manifold.
+
+        Args:
+            cond_raw: Raw condition (bs, cond_dim) or None for fully unconditional.
+            drop_mask: Optional boolean mask (bs,); rows set True are replaced by
+                the null embedding (CFG dropout). Ignored when cond_raw is None.
+            bs: Batch size, required when cond_raw is None (for null broadcast).
+            device: Unused (kept for call-site clarity); modules carry their device.
+
+        Returns:
+            Condition embedding of shape (bs, cond_emb_dim).
+        """
+        null = self.cond_norm(self.null_embedding).unsqueeze(0)  # (1, cond_emb_dim)
+
+        if cond_raw is None:
+            return null.expand(bs, -1)
+
+        if cond_raw.dim() == 1:
+            cond_raw = cond_raw.unsqueeze(-1)
+        cond_raw = cond_raw[:, :self.cond_dim].float()
+        assert torch.isfinite(cond_raw).all(), (
+            "Non-finite value in condition (batch.y); conditions must be "
+            "finite and normalized by the caller."
+        )
+
+        emb = self.cond_norm(self.cond_encoder(cond_raw))  # (bs, cond_emb_dim)
+
+        if drop_mask is not None:
+            emb = torch.where(
+                drop_mask.unsqueeze(-1), null.expand(emb.size(0), -1), emb
+            )
+        return emb
+
+    def _apply_noise(
+        self,
+        X: torch.Tensor,
+        E: torch.Tensor,
+        y: torch.Tensor,
+        node_mask: torch.Tensor,
+        t: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Apply noise to clean data for training.
+
+        Args:
+            X: Clean node features one-hot (bs, n, dx)
+            E: Clean edge features one-hot (bs, n, n, de)
+            y: Global features (bs, dy)
+            node_mask: Boolean mask (bs, n)
+            t: Optional time tensor; if None, samples from time distorter
+
+        Returns:
+            Dict with noisy data and metadata
+        """
+        bs = X.size(0)
+        device = X.device
+
+        # Sample timestep
+        if t is None:
+            t_float = self.time_distorter.train_ft(bs, device)
+        else:
+            t_float = t
+
+        # Get class indices
+        X_1_label = torch.argmax(X, dim=-1)
+        E_1_label = torch.argmax(E, dim=-1)
+
+        # Compute p(x_t | x_1) = t * one_hot(x_1) + (1-t) * limit_dist
+        prob_X_t, prob_E_t = self._p_xt_given_x1(X_1_label, E_1_label, t_float)
+
+        # Sample from the noisy distribution
+        sampled_t = sample_from_probs(prob_X_t, prob_E_t, node_mask)
+
+        # Convert to one-hot
+        X_t = F.one_hot(sampled_t.X, num_classes=self.limit_dist.num_node_classes).float()
+        E_t = F.one_hot(sampled_t.E, num_classes=self.limit_dist.num_edge_classes).float()
+
+        # Create placeholder and mask
+        z_t = PlaceHolder(X=X_t, E=E_t, y=y).type_as(X_t).mask(node_mask)
+
+        noisy_data = {
+            "t": t_float,
+            "X_t": z_t.X,
+            "E_t": z_t.E,
+            "y_t": z_t.y,
+            "node_mask": node_mask,
+        }
+
+        return noisy_data
+
+    def _p_xt_given_x1(
+        self,
+        X1: torch.Tensor,
+        E1: torch.Tensor,
+        t: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute p(x_t | x_1) for the linear interpolation.
+
+        p(x_t | x_1) = t * delta(x_t, x_1) + (1-t) * p_0(x_t)
+
+        Args:
+            X1: Node class indices (bs, n)
+            E1: Edge class indices (bs, n, n)
+            t: Time in [0, 1] (bs, 1)
+
+        Returns:
+            Tuple of (prob_X_t, prob_E_t) probability distributions
+        """
+        device = X1.device
+        limit_X = self.limit_dist.X.to(device)
+        limit_E = self.limit_dist.E.to(device)
+
+        t_time = t.squeeze(-1)[:, None, None]
+        X1_onehot = F.one_hot(X1, num_classes=len(limit_X)).float()
+        E1_onehot = F.one_hot(E1, num_classes=len(limit_E)).float()
+
+        prob_X = t_time * X1_onehot + (1 - t_time) * limit_X[None, None, :]
+        prob_E = (
+            t_time[:, None] * E1_onehot
+            + (1 - t_time[:, None]) * limit_E[None, None, None, :]
+        )
+
+        return prob_X.clamp(min=0.0, max=1.0), prob_E.clamp(min=0.0, max=1.0)
+
+    def denoise_step(
+        self,
+        t: torch.Tensor,
+        s: torch.Tensor,
+        X_t: torch.Tensor,
+        E_t: torch.Tensor,
+        y_t: torch.Tensor,
+        node_mask: torch.Tensor,
+        guidance_scale: Optional[float] = None,
+        eta: Optional[float] = None,
+        omega: Optional[float] = None,
+        posterior_transform: Optional[Callable] = None,
+        composition=None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Sample z_s given z_t (one CTMC denoising step) -- the learned dynamics.
+
+        This is the public per-step primitive an external Sampler drives in a
+        loop. It is fully self-sufficient: the stochasticity/target-guidance
+        strengths eta/omega are accepted as explicit arguments and written onto
+        the RateMatrixDesigner here, so a caller never has to remember to mutate
+        model state beforehand (and interleaved samplers can't clobber each other
+        via stale designer attributes).
+
+        Args:
+            t: Current time (bs, 1)
+            s: Next time (bs, 1)
+            X_t: Current node features one-hot (bs, n, dx)
+            E_t: Current edge features one-hot (bs, n, n, de)
+            y_t: Current global features (bs, dy)
+            node_mask: Boolean mask (bs, n)
+            guidance_scale: If not None, apply CFG with this scale by running
+                a dual forward pass and blending rate matrices geometrically.
+            eta: Stochasticity strength for this step. If None, the designer's
+                current value is left untouched.
+            omega: Target-guidance strength for this step. If None, the designer's
+                current value is left untouched.
+            posterior_transform: Optional callable
+                ``(pred_X, pred_E, noisy_data, node_mask) -> (pred_X, pred_E)``
+                applied to the predicted clean-graph marginals *before* the rate
+                matrix is built. This is the generic extension point external
+                guidance rides on (e.g. exact posterior-based discrete guidance):
+                the model itself stays guidance-agnostic. ``None`` is a no-op.
+
+        Returns:
+            Tuple of (X_s, E_s, y_s) for next state
+        """
+        bs, n, dx = X_t.shape
+        de = E_t.shape[-1]
+        dt = (s - t)[0]
+        device = X_t.device
+
+        # eta/omega are sampling policy, not weights: RateMatrixDesigner reads
+        # them as mutable attributes. Set them explicitly per call so this
+        # primitive is self-sufficient and does not depend on a prior caller
+        # having mutated the designer.
+        if eta is not None:
+            self.rate_matrix_designer.eta = eta
+        if omega is not None:
+            self.rate_matrix_designer.omega = omega
+
+        # Frozen-base adapter composition (N-branch product-of-experts). A None or
+        # empty composition falls through to the untouched legacy body below, so
+        # the default path is byte-identical to before this feature. Joint use with
+        # legacy input-CFG (guidance_scale) is out of scope for v1.
+        if composition is not None and len(composition) > 0:
+            assert guidance_scale is None, (
+                "composition (adapter CFG) and guidance_scale (legacy input-CFG) "
+                "cannot both be set in one denoise_step (v1 scope)."
+            )
+            return self._denoise_step_composed(
+                t, s, X_t, E_t, y_t, node_mask, composition, posterior_transform
+            )
+
+        # Create noisy data dict
+        noisy_data = {
+            "X_t": X_t,
+            "E_t": E_t,
+            "y_t": y_t,
+            "t": t,
+            "node_mask": node_mask,
+        }
+
+        # Conditional forward pass
+        extra_data = self._compute_extra_data(noisy_data)
+        pred = self.forward(noisy_data, extra_data, node_mask)
+
+        # Normalize predictions
+        pred_X = F.softmax(pred.X, dim=-1)
+        pred_E = F.softmax(pred.E, dim=-1)
+
+        # Guidance hook: rectify the predicted clean-graph marginals before they
+        # drive the CTMC. Reassigning pred_X/pred_E in place means both the rate
+        # matrix below AND the final-step MAP decode use the rectified marginals.
+        if posterior_transform is not None:
+            pred_X, pred_E = posterior_transform(pred_X, pred_E, noisy_data, node_mask)
+
+        # Compute conditional rate matrices
+        R_t_X, R_t_E = self.rate_matrix_designer.compute_rate_matrices(
+            t, node_mask, X_t, E_t, pred_X, pred_E
+        )
+
+        # CFG: unconditional forward pass + geometric rate matrix blending.
+        # y_t is already an embedding; the unconditional branch uses the learned
+        # null embedding (in the same embedding space).
+        if guidance_scale is not None:
+            uncond_y = self._embed_condition(None, bs=bs, device=device)
+            noisy_data_uncond = {
+                "X_t": X_t,
+                "E_t": E_t,
+                "y_t": uncond_y,
+                "t": t,
+                "node_mask": node_mask,
+            }
+            extra_data_uncond = self._compute_extra_data(noisy_data_uncond)
+            pred_uncond = self.forward(noisy_data_uncond, extra_data_uncond, node_mask)
+
+            pred_X_uncond = F.softmax(pred_uncond.X, dim=-1)
+            pred_E_uncond = F.softmax(pred_uncond.E, dim=-1)
+
+            # Apply the same guidance rectification to the unconditional branch so
+            # both rate matrices are built from consistently tilted posteriors.
+            # (Stacking exact guidance on top of CFG is a heuristic, not covered
+            # by the guidance theorem's exactness -- matching CFG's own status.)
+            if posterior_transform is not None:
+                pred_X_uncond, pred_E_uncond = posterior_transform(
+                    pred_X_uncond, pred_E_uncond, noisy_data_uncond, node_mask
+                )
+
+            R_t_X_uncond, R_t_E_uncond = self.rate_matrix_designer.compute_rate_matrices(
+                t, node_mask, X_t, E_t, pred_X_uncond, pred_E_uncond
+            )
+
+            # Geometric blending in log space
+            w = guidance_scale
+            R_t_X = torch.exp(
+                torch.log(R_t_X_uncond + 1e-6) * (1 - w)
+                + torch.log(R_t_X + 1e-6) * w
+            )
+            R_t_E = torch.exp(
+                torch.log(R_t_E_uncond + 1e-6) * (1 - w)
+                + torch.log(R_t_E + 1e-6) * w
+            )
+
+        # Compute step probabilities
+        prob_X, prob_E = self._compute_step_probs(R_t_X, R_t_E, X_t, E_t, dt)
+
+        # At the final step, decode the network's clean-graph prediction
+        # deterministically (argmax) instead of sampling from the marginals.
+        # Multinomial sampling at t~1 is a major source of spurious extra edges
+        # (each near-zero no-edge probability still flips a fraction of edges),
+        # which snowballs graph density and destroys validity. The reference
+        # implementation collapses to the MAP graph at the last step, so we match
+        # that: take the most-likely atom / bond type per node / edge.
+        if s[0].item() >= 1.0 - 1e-6:
+            prob_X = F.one_hot(pred_X.argmax(dim=-1), num_classes=pred_X.shape[-1]).float()
+            prob_E = F.one_hot(pred_E.argmax(dim=-1), num_classes=pred_E.shape[-1]).float()
+
+        # Sample next state
+        sampled_s = sample_from_probs(prob_X, prob_E, node_mask)
+
+        limit_X = self.limit_dist.X.to(device)
+        limit_E = self.limit_dist.E.to(device)
+
+        X_s = F.one_hot(sampled_s.X, num_classes=len(limit_X)).float()
+        E_s = F.one_hot(sampled_s.E, num_classes=len(limit_E)).float()
+
+        # Re-mask padding nodes/edges each step so junk padding states don't
+        # contaminate the next step's RRWP features (train/inference parity).
+        masked = PlaceHolder(X=X_s, E=E_s, y=y_t).mask(node_mask)
+        return masked.X, masked.E, y_t
+
+    # Backwards-compatible alias for the pre-refactor private name.
+    _sample_step = denoise_step
+
+    @torch.no_grad()
+    def _denoise_step_composed(self, t, s, X_t, E_t, y_t, node_mask, composition,
+                               posterior_transform=None):
+        """One CTMC denoise step under an N-branch adapter composition (product-of-
+        experts). Runs a SINGLE batched (N+1)*bs forward (group 0 = the negative
+        branch -- the frozen-base unconditional bypass, or, under autoguidance, a
+        degraded conditional; groups 1..N = each adapter's modulation), blends the
+        per-branch rate matrices geometrically in log space, and at the terminal
+        step decodes the blended clean-graph marginals. eta/omega are assumed
+        already set on the rate-matrix designer by the caller."""
+        bs, n, _ = X_t.shape
+        device = X_t.device
+        dt = (s - t)[0]
+        rep = len(composition) + 1
+
+        # extra features depend only on X_t,E_t,t -> compute ONCE, tile across groups
+        base_noisy = {"X_t": X_t, "E_t": E_t, "y_t": y_t, "t": t, "node_mask": node_mask}
+        extra = self._compute_extra_data(base_noisy)
+        extra_b = PlaceHolder(
+            X=extra.X.repeat(rep, 1, 1),
+            E=extra.E.repeat(rep, 1, 1, 1),
+            y=extra.y.repeat(rep, 1),
+        )
+        nd = {
+            "X_t": X_t.repeat(rep, 1, 1),
+            "E_t": E_t.repeat(rep, 1, 1, 1),
+            "y_t": y_t.repeat(rep, 1),
+            "t": t.repeat(rep, 1),
+            "node_mask": node_mask.repeat(rep, 1),
+        }
+        mod = composition.build_modulation(bs, t)          # (N+1)*bs gated-FiLM modulation
+
+        pred = self.forward(nd, extra_b, nd["node_mask"], cond_modulation=mod)
+        pX = F.softmax(pred.X, dim=-1).view(rep, bs, *pred.X.shape[1:])
+        pE = F.softmax(pred.E, dim=-1).view(rep, bs, *pred.E.shape[1:])
+
+        # optional per-branch posterior_transform (keeps exact-guidance stacking)
+        if posterior_transform is not None:
+            gnd = {"X_t": X_t, "E_t": E_t, "y_t": y_t, "t": t, "node_mask": node_mask}
+            for g in range(rep):
+                pX[g], pE[g] = posterior_transform(pX[g], pE[g], gnd, node_mask)
+
+        w = composition.weights(device, dtype=pX.dtype)
+
+        if getattr(composition, "blend_space", "prob") == "prob":
+            # Blend the CLEAN-GRAPH MARGINALS, then derive ONE rate matrix from the
+            # result -- FreeGress Eq. 11's placement, in our geometric (PoE) form, so
+            # that only WHERE the blend happens changes, not HOW.
+            #
+            # The rate path below builds a rate matrix per branch, and
+            # compute_rate_matrices draws its own X_1 sample inside each one. Blending
+            # N+1 such matrices therefore mixes N+1 independent sampling draws; doing it
+            # here spends exactly one. It also makes the trajectory consistent with the
+            # terminal step, which has always PoE-blended clean log-probs.
+            qX = torch.log_softmax(self._blend_logp(pX, w, composition.mode), dim=-1)
+            qE = torch.log_softmax(self._blend_logp(pE, w, composition.mode), dim=-1)
+            R_t_X, R_t_E = self.rate_matrix_designer.compute_rate_matrices(
+                t, node_mask, X_t, E_t, qX.exp(), qE.exp()
+            )
+        else:
+            # per-branch rate matrices (each draws its own X_1 sample, as shipped 2-branch CFG does)
+            RXs, REs = [], []
+            for g in range(rep):
+                rx, re = self.rate_matrix_designer.compute_rate_matrices(
+                    t, node_mask, X_t, E_t, pX[g], pE[g]
+                )
+                RXs.append(rx)
+                REs.append(re)
+            RX, RE = torch.stack(RXs), torch.stack(REs)        # (N+1, bs, ...)
+
+            R_t_X = self._blend_rates(RX, w, composition.mode)
+            R_t_E = self._blend_rates(RE, w, composition.mode)
+
+        prob_X, prob_E = self._compute_step_probs(R_t_X, R_t_E, X_t, E_t, dt)
+
+        # terminal step: decode the blended clean-graph marginals (no single
+        # conditional branch exists here, so we PoE-blend the clean log-probs).
+        if s[0].item() >= 1.0 - 1e-6:
+            qX = self._blend_logp(pX, w, composition.mode)
+            qE = self._blend_logp(pE, w, composition.mode)
+            prob_X = F.one_hot(qX.argmax(dim=-1), num_classes=pX.shape[-1]).float()
+            prob_E = F.one_hot(qE.argmax(dim=-1), num_classes=pE.shape[-1]).float()
+
+        sampled_s = sample_from_probs(prob_X, prob_E, node_mask)
+        limit_X = self.limit_dist.X.to(device)
+        limit_E = self.limit_dist.E.to(device)
+        X_s = F.one_hot(sampled_s.X, num_classes=len(limit_X)).float()
+        E_s = F.one_hot(sampled_s.E, num_classes=len(limit_E)).float()
+        masked = PlaceHolder(X=X_s, E=E_s, y=y_t).mask(node_mask)
+        return masked.X, masked.E, y_t
+
+    @staticmethod
+    def _blend_rates(R, w, mode):
+        """Product-of-experts geometric blend of per-branch rate matrices in log
+        space. R: (N+1, ...), group 0 = uncond. RE-STABILIZED after the blend
+        (nan_to_num + >1e5 clamp, matching RateMatrixDesigner._stabilize) since
+        w>1 with a small R_uncond can make the log-ratio deviation explode;
+        structurally-forbidden transitions (R_uncond==0) stay forbidden."""
+        eps = 1e-6
+        lu = torch.log(R[0] + eps)
+        lc = torch.log(R[1:] + eps)                        # (N, ...)
+        dev = torch.einsum("i,i...->...", w, lc - lu)
+        if mode == "mean":
+            dev = dev / w.numel()
+        Rb = (lu + dev).exp()
+        Rb = torch.nan_to_num(Rb)
+        Rb = torch.where(Rb > 1e5, torch.zeros_like(Rb), Rb)
+        Rb = torch.where(R[0] == 0, torch.zeros_like(Rb), Rb)
+        return Rb
+
+    @staticmethod
+    def _blend_logp(p, w, mode):
+        """Same PoE blend on clean-graph softmax marginals -> unnormalized log q
+        (argmax is normalization-invariant). p: (N+1, ...), group 0 = the NEGATIVE
+        branch: the unconditional base normally, a degraded conditional under
+        autoguidance. The arithmetic is identical either way -- only what fills
+        group 0 changes -- which is why autoguidance needed no change here.
+
+        ``w`` is either ``(N,)`` -- one weight per branch, shared by the batch -- or
+        ``(N, bs)``, one weight per branch PER MOLECULE. The second form exists for
+        closed-loop control, where each molecule carries its own error signal and so
+        earns its own guidance strength; collapsing that to a batch mean would average
+        away the very thing being tested.
+        """
+        eps = 1e-8
+        lu = torch.log(p[0] + eps)
+        lc = torch.log(p[1:] + eps)
+        if w.dim() == 1:
+            dev = torch.einsum("i,i...->...", w, lc - lu)
+            n_branches = w.numel()
+        elif w.dim() == 2:
+            diff = lc - lu                                   # (N, bs, ...)
+            wb = w.reshape(*w.shape, *([1] * (diff.dim() - 2)))
+            dev = (wb * diff).sum(0)
+            n_branches = w.shape[0]
+        else:
+            raise ValueError(f"weights must be (N,) or (N, bs); got {tuple(w.shape)}")
+        if mode == "mean":
+            dev = dev / n_branches
+        return lu + dev
+
+    def _compute_step_probs(
+        self,
+        R_t_X: torch.Tensor,
+        R_t_E: torch.Tensor,
+        X_t: torch.Tensor,
+        E_t: torch.Tensor,
+        dt: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute transition probabilities from rate matrices.
+
+        P(x_s | x_t) ≈ I + R_t * dt for small dt
+
+        Args:
+            R_t_X: Node rate matrix (bs, n, num_classes)
+            R_t_E: Edge rate matrix (bs, n, n, num_classes)
+            X_t: Current node features one-hot (bs, n, dx)
+            E_t: Current edge features one-hot (bs, n, n, de)
+            dt: Time step
+
+        Returns:
+            Tuple of (prob_X, prob_E) transition probabilities
+        """
+        step_probs_X = R_t_X * dt
+        step_probs_E = R_t_E * dt
+
+        # Zero out diagonal entries
+        step_probs_X.scatter_(-1, X_t.argmax(-1)[:, :, None], 0.0)
+        step_probs_E.scatter_(-1, E_t.argmax(-1)[:, :, :, None], 0.0)
+
+        # Set diagonal such that rows sum to 1
+        step_probs_X.scatter_(
+            -1,
+            X_t.argmax(-1)[:, :, None],
+            (1.0 - step_probs_X.sum(dim=-1, keepdim=True)).clamp(min=0.0),
+        )
+        step_probs_E.scatter_(
+            -1,
+            E_t.argmax(-1)[:, :, :, None],
+            (1.0 - step_probs_E.sum(dim=-1, keepdim=True)).clamp(min=0.0),
+        )
+
+        return step_probs_X, step_probs_E
+
+    def _compute_extra_data(self, noisy_data: Dict[str, torch.Tensor]) -> PlaceHolder:
+        """
+        Compute extra features from noisy data.
+
+        Args:
+            noisy_data: Dict with "X_t", "E_t", "y_t", "t", "node_mask"
+
+        Returns:
+            PlaceHolder with extra features
+        """
+        extra_features = self.extra_features(noisy_data)
+        extra_X = extra_features.X
+        extra_y = extra_features.y
+
+        # Molecular domain features (charge/valency into X, weight into y).
+        # IMPORTANT: molecular weight must be appended BEFORE the time column.
+        # The transformer treats the LAST column of y as the flow-time t
+        # (transformer.py: `time = y[:, -1:]`), matching src's contract
+        # (graph_discrete_flow_model.py: extra_y = cat(..., weight); cat(extra_y, t)).
+        # If molecular weight were appended after t it would displace t from the
+        # last position, so the sinusoidal time embedding would be fed the noisy
+        # graph's molecular weight instead of the flow-time -> a time-blind
+        # denoiser (this exact bug drove validity to 0%).
+        if self.mol_features is not None:
+            mol_X, mol_y = self.mol_features(noisy_data)
+            extra_X = torch.cat((extra_X, mol_X), dim=-1)
+            extra_y = torch.cat((extra_y, mol_y), dim=1)
+
+        # Append time LAST so the transformer's y[:, -1] time read gets true t.
+        t = noisy_data["t"]
+        extra_y = torch.cat((extra_y, t), dim=1)
+
+        return PlaceHolder(X=extra_X, E=extra_features.E, y=extra_y)
+
+    @classmethod
+    def from_dataloader(
+        cls,
+        dataloader,
+        n_layers: int = 6,
+        hidden_dim: int = 256,
+        noise_type: str = "marginal",
+        **kwargs,
+    ) -> "DeFoGModel":
+        """
+        Create a model with dimensions inferred from a dataloader.
+
+        This is a convenience method that analyzes a dataloader to determine:
+        - Number of node/edge classes
+        - Node count distribution
+        - Marginal distributions (if noise_type="marginal")
+        - Maximum number of nodes
+
+        Args:
+            dataloader: PyG DataLoader
+            n_layers: Number of transformer layers
+            hidden_dim: Hidden dimension
+            noise_type: Type of noise distribution
+            **kwargs: Additional arguments passed to constructor
+
+        Returns:
+            Configured DeFoGModel instance
+
+        Example:
+            >>> from torch_geometric.loader import DataLoader
+            >>> loader = DataLoader(dataset, batch_size=32)
+            >>> model = DeFoGModel.from_dataloader(loader, n_layers=6)
+        """
+        from .data import compute_dataset_statistics
+
+        # Compute statistics from dataloader
+        stats = compute_dataset_statistics(dataloader)
+
+        # Prepare constructor arguments
+        model_kwargs = {
+            "num_node_classes": stats["num_node_classes"],
+            "num_edge_classes": stats["num_edge_classes"],
+            "n_layers": n_layers,
+            "hidden_dim": hidden_dim,
+            "noise_type": noise_type,
+            "node_counts": stats["node_counts"],
+            "max_nodes": stats["max_nodes"],
+        }
+
+        # Add marginals if using marginal noise
+        if noise_type == "marginal":
+            model_kwargs["node_marginals"] = stats["node_marginals"]
+            model_kwargs["edge_marginals"] = stats["edge_marginals"]
+
+        # Override with any additional kwargs
+        model_kwargs.update(kwargs)
+
+        return cls(**model_kwargs)
+
+    @classmethod
+    def from_config(
+        cls,
+        hparams: dict,
+        state_dict: dict,
+        device: Optional[Union[str, torch.device]] = "cpu",
+    ) -> "DeFoGModel":
+        """
+        Rebuild a model from a hyper-parameter dict and a separately-stored state dict.
+
+        The counterpart to ``save``/``load`` for containers that keep tensors and
+        declarations in different files (e.g. safetensors plus a metadata document), and
+        therefore cannot round-trip a pickled checkpoint. ``load`` remains the path for
+        ``.ckpt`` files.
+
+        Both tensor-valued hyper-parameters (``node_marginals``, ``edge_marginals``,
+        ``node_counts``) and scalar ones must be present in ``hparams``; the caller is
+        responsible for recombining them if its container stores them separately.
+
+        Args:
+            hparams: keyword arguments for ``__init__``.
+            state_dict: the model's state dict.
+            device: device to load onto. Defaults to "cpu".
+
+        Returns:
+            Loaded DeFoGModel in eval mode.
+        """
+        model = cls(**hparams)
+        model.load_state_dict(state_dict)
+        return model.to(device).eval()
+
+    def save(self, path: str) -> str:
+        """
+        Save the model to a checkpoint file.
+
+        Saves model weights and hyperparameters (no optimizer state).
+        The model can be restored using DeFoGModel.load().
+
+        Args:
+            path: File path to save to. If no .ckpt extension is provided,
+                  it will be appended automatically.
+
+        Returns:
+            The actual path the model was saved to (with extension).
+
+        Example:
+            >>> model.save("my_model")  # Saves to my_model.ckpt
+            >>> model.save("checkpoints/model.ckpt")
+        """
+        # Ensure .ckpt extension
+        if not path.endswith(".ckpt"):
+            path = path + ".ckpt"
+
+        # Save checkpoint with weights and hyperparameters only
+        checkpoint = {
+            "state_dict": self.state_dict(),
+            "hyper_parameters": dict(self.hparams),
+        }
+        torch.save(checkpoint, path)
+
+        return path
+
+    @classmethod
+    def load(
+        cls,
+        path: str,
+        device: Optional[Union[str, torch.device]] = "cpu",
+    ) -> "DeFoGModel":
+        """
+        Load a model from a checkpoint file.
+
+        Args:
+            path: Path to the checkpoint file. If no .ckpt extension is
+                  provided, it will be appended automatically.
+            device: Device to load the model to. Defaults to "cpu".
+                    Can be "cpu", "cuda", "cuda:0", etc.
+
+        Returns:
+            Loaded DeFoGModel instance ready for inference or further training.
+
+        Example:
+            >>> model = DeFoGModel.load("my_model.ckpt")
+            >>> model = DeFoGModel.load("my_model", device="cuda")
+            >>> samples = model.sample(num_samples=10)
+        """
+        # Ensure .ckpt extension
+        if not path.endswith(".ckpt"):
+            path = path + ".ckpt"
+
+        # Load checkpoint (weights_only=False needed for hyperparameters with tensors)
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+
+        # Handle both our format and Lightning's format
+        if "hyper_parameters" in checkpoint:
+            hparams = checkpoint["hyper_parameters"]
+        elif "hparams" in checkpoint:
+            hparams = checkpoint["hparams"]
+        else:
+            raise ValueError(
+                f"Checkpoint at {path} does not contain hyperparameters. "
+                "Cannot reconstruct model."
+            )
+
+        # Create model instance
+        model = cls(**hparams)
+
+        # Load state dict
+        if "state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["state_dict"])
+        else:
+            raise ValueError(
+                f"Checkpoint at {path} does not contain state_dict."
+            )
+
+        # Move to device and set to eval mode
+        model = model.to(device)
+        model.eval()
+
+        return model
+
+    def __repr__(self) -> str:
+        parts = [
+            f"DeFoGModel(node_classes={self.num_node_classes}",
+            f"edge_classes={self.num_edge_classes}",
+            f"n_layers={self.model.n_layers}",
+        ]
+        if self.cond_dim > 0:
+            parts.append(f"cond_dim={self.cond_dim}")
+            parts.append(f"cond_emb_dim={self.cond_emb_dim}")
+            parts.append(f"cond_drop_prob={self.cond_drop_prob}")
+            parts.append(f"guidance_scale={self.guidance_scale}")
+        return ", ".join(parts) + ")"
