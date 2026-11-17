@@ -351,6 +351,17 @@ class MoleculeDomain(GraphDomain):
         dx = len(self.atom_decoder)
         de = len(self.bond_decoder)
 
+        # A kekulized vocabulary has no aromatic bond class, and every recorded base is kekulized. So
+        # an aromatic core ("c1ccccc1") is encoded in its Kekule form, as the model sees it, instead
+        # of failing on a bond type the vocabulary cannot hold. (A copy: the caller's molecule keeps
+        # its aromaticity, and atom indices are unchanged, so ``keep`` still means the same atoms.)
+        if Chem.BondType.AROMATIC not in bond_class and any(b.GetIsAromatic() for b in mol.GetBonds()):
+            mol = Chem.Mol(mol)
+            try:
+                Chem.Kekulize(mol, clearAromaticFlags=True)
+            except Exception as exc:                           # noqa: BLE001 - RDKit raises several types
+                raise ValueError(f"could not kekulize the core for a kekulized vocabulary: {exc}") from exc
+
         if keep is None:
             keep = list(range(mol.GetNumAtoms()))
         keep = list(keep)

@@ -220,3 +220,72 @@ def test_a_core_plus_growth_beyond_max_nodes_is_refused(small_model):
     with pytest.raises(ValueError, match="max_nodes"):
         sampler(small_model, SubgraphConstraint(*make_core())).sample(
             2, n_free=too_many, device=torch.device("cpu"), show_progress=False)
+
+
+# ============================================================ encoding a core for a kekulized model
+def kekulized_domain():
+    from defog_adapt.domains import MoleculeDomain
+    from defog_adapt.domains.molecule import build_encoders
+
+    _, _, _, bond_dec = build_encoders(["C", "N", "O"], ["SINGLE", "DOUBLE", "TRIPLE"])
+    return MoleculeDomain(["C", "N", "O"], bond_dec)
+
+
+def test_an_aromatic_core_is_encoded_in_kekule_form_for_a_kekulized_vocabulary():
+    """Every recorded base is kekulized, so the obvious call -- encode benzene as written -- must work
+    instead of failing on a bond type the vocabulary has no class for."""
+    X, E = kekulized_domain().encode("c1ccccc1")
+    assert X.shape == (6, 3) and E.shape == (6, 6, 4)
+    assert X.argmax(-1).tolist() == [0] * 6
+    classes = E.argmax(-1)                                  # 0 none, 1 single, 2 double, 3 triple
+    assert torch.equal(classes, classes.T), "the bond block must be symmetric"
+    ring = [(i, (i + 1) % 6) for i in range(6)]
+    assert all(classes[i, j] in (1, 2) for i, j in ring), "ring bonds are single or double, never aromatic"
+    assert sorted(int(classes[i, j]) for i, j in ring) == [1, 1, 1, 2, 2, 2], "alternating Kekule form"
+    assert int((classes > 0).sum()) == 12, "6 bonds, counted both ways, and no other bonds"
+
+
+def test_a_kekule_smiles_gives_the_same_core_as_the_aromatic_one():
+    """Both forms describe benzene; up to which of the two Kekule structures RDKit picks, the core is
+    the same set of single and double bonds around the ring."""
+    d = kekulized_domain()
+    a = d.encode("c1ccccc1")[1].argmax(-1)
+    b = d.encode("C1=CC=CC=C1")[1].argmax(-1)
+    assert sorted(a.flatten().tolist()) == sorted(b.flatten().tolist())
+
+
+def test_the_callers_molecule_keeps_its_aromaticity():
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles("c1ccccc1")
+    kekulized_domain()._mol_to_core(mol)
+    assert all(b.GetIsAromatic() for b in mol.GetBonds()), "encoding must work on a copy"
+
+
+def test_an_aromatic_vocabulary_still_encodes_aromatic_bonds_as_they_are():
+    """Nothing changes where the vocabulary HAS an aromatic class."""
+    from defog_adapt.domains import MoleculeDomain
+    from defog_adapt.domains.molecule import build_encoders
+
+    _, _, _, bond_dec = build_encoders(["C"], ["SINGLE", "DOUBLE", "AROMATIC"])
+    _, E = MoleculeDomain(["C"], bond_dec).encode("c1ccccc1")
+    assert int(E.argmax(-1).max()) == 3 and bool((E.argmax(-1) == 3).any()), "aromatic class kept"
+    assert not bool((E.argmax(-1) == 2).any()), "no double bonds introduced"
+
+
+def test_a_subgraph_of_an_aromatic_ring_is_kekulized_with_the_right_atoms():
+    d = kekulized_domain()
+    X, E = d.encode_subgraph("Cc1ccccc1", [1, 2, 3, 4, 5, 6])          # the ring, without the methyl
+    assert X.shape == (6, 3) and int((E.argmax(-1) > 0).sum()) == 12
+
+
+def test_an_unkekulizable_core_is_a_clear_error_not_a_crash():
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles("c1ccccc1")
+    for atom in mol.GetAtoms():                              # an aromatic ring that cannot be Kekule
+        atom.SetNumExplicitHs(0)
+    odd = Chem.RWMol(mol)
+    odd.RemoveBond(0, 1)                                     # break the ring but keep aromatic flags
+    with pytest.raises(ValueError, match="kekulize"):
+        kekulized_domain()._mol_to_core(odd.GetMol())
