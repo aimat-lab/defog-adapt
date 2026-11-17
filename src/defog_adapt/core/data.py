@@ -300,6 +300,13 @@ def symmetrize_edges(E: torch.Tensor) -> torch.Tensor:
     return E
 
 
+def _edge_upper_mask(node_mask: torch.Tensor) -> torch.Tensor:
+    """Undirected off-diagonal edges over real nodes: each edge once, no padding,
+    no self-loops. Shape ``(bs, n, n)`` boolean."""
+    m = node_mask[:, :, None] & node_mask[:, None, :]
+    return torch.triu(m, diagonal=1)
+
+
 class DistributionNodes:
     """
     Distribution over graph sizes for sampling.

@@ -29,7 +29,7 @@ import torch.nn.functional as F
 
 from defog_adapt.core import DeFoGModel
 from defog_adapt.core import rl as live
-from defog_adapt.core.guidance import _edge_upper_mask
+from defog_adapt.core.data import _edge_upper_mask
 
 import _gdpo_frozen as frozen   # tests/ has no __init__.py; pytest prepends this dir
 

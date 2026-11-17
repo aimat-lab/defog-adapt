@@ -27,8 +27,8 @@ network's clean prediction at subsampled noisy states along that rollout.
 The feature is additive and optional: importing this module changes nothing until
 you construct a :class:`GDPOTrainer`. It reuses the existing :class:`Sampler` for
 rollouts (via a ``_post_loop`` endpoint stash, the same pattern
-``InpaintingSampler`` uses) and the existing energy/reward classes in
-:mod:`defog_adapt.core.guidance`.
+``InpaintingSampler`` uses) and the existing energy classes in
+:mod:`defog_adapt.core.energy`.
 """
 
 from typing import Callable, List, Optional, Sequence, Tuple
@@ -37,8 +37,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 
-from .data import dense_to_pyg
-from .guidance import _edge_upper_mask
+from .data import _edge_upper_mask, dense_to_pyg
 from .sampler import Sampler
 
 
@@ -47,10 +46,10 @@ from .sampler import Sampler
 # ===========================================================================
 class Reward:
     """Reward contract: ``__call__(X1, E1, node_mask) -> (K,)`` tensor, higher is
-    better. Mirrors the energy contract in :mod:`defog_adapt.core.guidance` (which is
-    *lower*-is-better) so any ``MoleculePropertyEnergy`` / ``MultiPropertyEnergy``
-    composes via :func:`reward_from_energy`. This base class is documentation; any
-    callable with the same signature works."""
+    better. Mirrors the energy contract in :mod:`defog_adapt.core.energy` (which is
+    *lower*-is-better) so any ``MoleculePropertyEnergy`` composes via
+    :func:`reward_from_energy`. This base class is documentation; any callable with the
+    same signature works."""
 
     def __call__(self, X1, E1, node_mask) -> torch.Tensor:  # pragma: no cover
         raise NotImplementedError

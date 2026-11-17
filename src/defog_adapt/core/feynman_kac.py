@@ -471,38 +471,3 @@ class FeynmanKacSampler(Sampler):
         if was_training:
             model.train()
         return samples
-
-
-class JointGuidanceSampler(FeynmanKacSampler):
-    """FK-SMC steering toward MULTIPLE properties at once.
-
-    Constructed from a list of trained :class:`~defog_adapt.core.guidance.ExactGuidance`
-    modules plus a joint ``energy_fn`` (e.g.
-    :class:`~defog_adapt.core.guidance.MultiPropertyEnergy`), and the usual FK
-    hyperparameters (``beta``, ``warmup_frac``, ``resample_interval``, ``ess_frac``,
-    ``eta``, ``omega``, ``sample_steps``, ...).
-
-    The guidance modules are combined in the PROPOSAL via
-    :class:`~defog_adapt.core.guidance.CompositeGuidance` (``mode`` = "product" | "mean" |
-    "none"); the joint ``energy_fn`` is the FK reward and is fully decoupled from the
-    guidance list. Set each guidance's target (``set_target``) before sampling, or
-    use ``self.composite.set_targets([...])``.
-
-    Args:
-        guidances: list of ExactGuidance (each amortized on its own property).
-        energy_fn: joint reward (lower = better), evaluated on the predicted clean graph.
-        mode: proposal composition, "product" (default) | "mean" | "none".
-        guidance_weights: per-guidance strengths (default = each guidance's ``.weight``).
-    """
-
-    def __init__(self, model, guidances, energy_fn, *, mode: str = "product",
-                 guidance_weights=None, **fk_kwargs):
-        from .guidance import CompositeGuidance
-        self.composite = CompositeGuidance(guidances, mode=mode, weights=guidance_weights)
-        proposal = self.composite.reweight if mode != "none" else None
-        super().__init__(model, energy_fn, proposal_transform=proposal, **fk_kwargs)
-        self.guidances = list(guidances)
-        self.mode = mode
-
-    def _desc(self) -> str:
-        return f"JointFK[{len(self.guidances)}x,{self.mode}]"

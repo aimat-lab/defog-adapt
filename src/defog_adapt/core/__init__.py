@@ -86,23 +86,8 @@ from .adapter import (
     GroundedAdapterModule,
 )
 from .constraint import Constraint, SubgraphConstraint
-from .guidance import (
-    DensityRatio,
-    EnergyRatio,
-    ClassifierRatio,
-    RewardRatio,
-    MoleculePropertyEnergy,
-    MultiPropertyEnergy,
-    build_guidance_network,
-    bregman_loss,
-    ExactGuidance,
-    CompositeGuidance,
-    GuidanceModule,
-    AmortizedPropertyGuidanceModule,
-    LatentGuidanceModule,
-    tanimoto_similarity,
-)
-from .feynman_kac import FeynmanKacSampler, JointGuidanceSampler, predict_clean
+from .energy import MoleculePropertyEnergy
+from .feynman_kac import FeynmanKacSampler, predict_clean
 from .property_head import PropertyHead, LearnedPropertyEnergy, fit_property_head
 from .spectrum import Band, SpectrumEnergy, band_masses
 from .rl import (
@@ -188,31 +173,17 @@ __all__ = [
     # Constraints (inpainting)
     "Constraint",
     "SubgraphConstraint",
-    # Exact discrete guidance (arXiv:2509.21912)
-    "DensityRatio",
-    "EnergyRatio",
-    "ClassifierRatio",
-    "RewardRatio",
+    # Feynman-Kac steering: energies, property heads, sampler (arXiv:2601.10403)
     "MoleculePropertyEnergy",
     "PropertyHead",
     "fit_property_head",
     "LearnedPropertyEnergy",
-    "build_guidance_network",
-    "bregman_loss",
-    "ExactGuidance",
-    "CompositeGuidance",
-    "MultiPropertyEnergy",
+    "FeynmanKacSampler",
+    "predict_clean",
     # Vibrational-spectrum steering
     "Band",
     "SpectrumEnergy",
     "band_masses",
-    "GuidanceModule",
-    "AmortizedPropertyGuidanceModule",
-    "LatentGuidanceModule",
-    "tanimoto_similarity",
-    "FeynmanKacSampler",
-    "JointGuidanceSampler",
-    "predict_clean",
     # GDPO reinforcement-learning fine-tuning (arXiv:2402.16302)
     "RLTrainerBase",
     "GDPOTrainer",

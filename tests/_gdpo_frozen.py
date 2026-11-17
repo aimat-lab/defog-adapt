@@ -33,7 +33,7 @@ import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 
 from defog_adapt.core.data import dense_to_pyg
-from defog_adapt.core.guidance import _edge_upper_mask
+from defog_adapt.core.data import _edge_upper_mask
 from defog_adapt.core.sampler import Sampler
 from defog_adapt.core.rl import (
     EMA,

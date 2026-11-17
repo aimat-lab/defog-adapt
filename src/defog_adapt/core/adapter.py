@@ -37,8 +37,8 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 
+from .data import to_dense
 from .layers import timestep_embedding
-from .guidance import _GuidanceModuleBase
 
 _STREAMS = ("X", "E", "y")
 _DIMKEY = {"X": "dx", "E": "de", "y": "dy"}
@@ -941,11 +941,31 @@ class AdapterRegistry:
 # ===========================================================================
 # Training module
 # ===========================================================================
-class AdapterModule(_GuidanceModuleBase):
+class _FrozenBaseModule(pl.LightningModule):
+    """Shared plumbing for training an add-on over a FROZEN base: freeze the base, and keep
+    it out of the add-on's checkpoints."""
+
+    def _freeze_base(self, base):
+        self.base = base.requires_grad_(False)
+
+    def on_save_checkpoint(self, checkpoint):
+        # Don't serialize the frozen base inside every adapter checkpoint.
+        checkpoint["state_dict"] = {
+            k: v for k, v in checkpoint["state_dict"].items()
+            if not k.startswith("base.")
+        }
+
+    @staticmethod
+    def _dense(batch):
+        d, node_mask = to_dense(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        d = d.mask(node_mask)
+        return d.X, d.E, node_mask
+
+
+class AdapterModule(_FrozenBaseModule):
     """Train ONLY the adapter (frozen base) with the base's own denoising CE loss:
-    a direct conditional denoiser ``p(x1|x_t,c)``. Reuses ``_GuidanceModuleBase``
-    for freeze + ``base.*``-stripping checkpoint plumbing; overrides
-    ``configure_optimizers`` (the base hardcodes ``self.h``)."""
+    a direct conditional denoiser ``p(x1|x_t,c)``. The base is frozen and kept out of the
+    checkpoints by :class:`_FrozenBaseModule`."""
 
     def __init__(self, base, adapter: AdaLNAdapter, cond_attr: str = "cond",
                  cond_drop_prob: float = 0.0, lr: float = 2e-4, l10_lr_scale: float = 1.0):

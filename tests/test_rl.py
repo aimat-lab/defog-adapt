@@ -33,7 +33,7 @@ from defog_adapt.core import (
     reward_from_energy,
     EMA,
 )
-from defog_adapt.core.guidance import _edge_upper_mask
+from defog_adapt.core.data import _edge_upper_mask
 from defog_adapt.core.noise import sample_noise
 
 
