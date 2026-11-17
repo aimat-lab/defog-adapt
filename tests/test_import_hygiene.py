@@ -58,3 +58,32 @@ def test_the_training_figure_is_not_held_by_pyplot(tmp_path):
     out = tmp_path / "fig.png"
     fig.savefig(out)
     assert out.stat().st_size > 1000
+
+
+# ============================================================ optional dependencies
+def test_the_core_and_the_data_loaders_import_without_rdkit():
+    """RDKit is an optional dependency (the ``chem`` extra). Everything that is not chemistry
+    has to import and work without it."""
+    proc = _run("""
+        import sys
+        sys.modules["rdkit"] = None            # `import rdkit` now raises ImportError
+        import defog_adapt.core, defog_adapt.data
+        from defog_adapt.core import DeFoGModel, FeynmanKacSampler, AdaLNAdapter
+        print("ok")
+    """)
+    assert proc.returncode == 0 and "ok" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_the_chemistry_domain_names_the_extra_to_install_when_rdkit_is_missing():
+    proc = _run("""
+        import sys
+        sys.modules["rdkit"] = None
+        try:
+            import defog_adapt.domains
+        except ImportError as exc:
+            assert "defog-adapt[chem]" in str(exc), f"unhelpful message: {exc}"
+            print("ok")
+        else:
+            raise SystemExit("defog_adapt.domains imported without RDKit?")
+    """)
+    assert proc.returncode == 0 and "ok" in proc.stdout, proc.stdout + proc.stderr
