@@ -1,7 +1,7 @@
 """
 ZINC250k under the split the published numbers were actually produced with.
 
-E1 (unconditional distribution quality, ``docs/unconditional-protocol.md``)
+E1 (the unconditional distribution-quality protocol)
 quotes its baselines from the literature instead of rerunning them, so every
 number produced here has to come from the *same* split those papers used.
 ZINC250k ships no canonical split; the GDSS/GruM lineage DeFoG follows -- "the
@@ -71,9 +71,8 @@ N_TOTAL = 249455
 N_TEST = 24887
 N_TRAIN_FULL = N_TOTAL - N_TEST  # 224568
 
-#: Frozen vocabulary. Derived-from-data ordering (as
-#: ``experiments/training__zinc_uncond.py`` does) makes a checkpoint's channel
-#: order depend on the CSV, which is a reproducibility hazard for no benefit.
+#: Frozen vocabulary. Deriving the ordering from the data (as an earlier training
+#: script did) makes a checkpoint's channel order depend on the CSV, which is a reproducibility hazard for no benefit.
 ATOM_TYPES: List[str] = ["C", "N", "O", "F", "P", "S", "Cl", "Br", "I"]
 
 #: Kekulized: no AROMATIC class. Aromatic vs. kekulized changes what counts as a

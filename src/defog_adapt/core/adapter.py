@@ -3,7 +3,7 @@ Frozen-base AdaLN/FiLM CFG-adapters for DeFoG.
 
 Localize classifier-free guidance to a small, swappable, stackable adapter on a
 FROZEN unconditional base (ControlNet / T2I-Adapter / IP-Adapter family), instead
-of retraining the base per condition. See ``docs/ADAPTER_PLAN.md``.
+of retraining the base per condition. See ``docs/adapters.md``.
 
 Mechanism
 ---------
@@ -202,7 +202,7 @@ class NodeConditionCrossAttention(nn.Module):
     """One frozen-base layer's cross-attention from NODES to condition tokens.
 
     Why this exists. The FiLM path computes every scale/shift/gate from ``c`` alone and
-    broadcasts the same numbers to every atom: ``RESEARCH.md`` §2.2 calls this an
+    broadcasts the same numbers to every atom: the research log calls this an
     open-loop controller and argues it is why property targeting plateaus -- logP is a
     sum of per-atom environment contributions, so the right action at a given atom
     depends on that atom, and a uniform push cannot express it.
@@ -222,7 +222,7 @@ class NodeConditionCrossAttention(nn.Module):
     Because those representations come out of the frozen base's own message passing, by
     the middle layers a query already reflects the atom's neighbourhood, not just its
     element. It is still NOT the global running total that a closed-loop readout
-    (PLAN.md Wave 5) would provide: nothing here tells the adapter what the partial
+    (not part of this package) would provide: nothing here tells the adapter what the partial
     molecule's logP currently is.
 
     Structure follows IP-Adapter: a SEPARATE attention path added to the frozen block's

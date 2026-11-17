@@ -1,6 +1,6 @@
 """
-FROZEN COPY of the GDPO trainer stack as of commit 4094123, for the refactor parity
-gate (docs/dam_design.md section 7).
+FROZEN COPY of the GDPO trainer stack as of commit 4094123 of the research package, for the
+refactor parity gate.
 
 `tests/test_rl_parity.py` compares these pre-refactor classes against the live ones in
 `defog_adapt.core.rl` IN THE SAME PROCESS, which removes the machine, the torch build and the
@@ -488,15 +488,14 @@ class AdapterGDPOTrainer(GDPOTrainer):
                                  group_ids=groups, crn=self.crn, guidance_scale=1.0)
         sampler.composition = comp
         # `condition` MUST reach the size distribution. A condition-aware
-        # SizeDistribution (a concept-conditioned one) recovers its
-        # target from `condition.argmin(-1)` and silently falls back to the base's
-        # marginal when it is absent -- so omitting it does not raise, it just draws
-        # every rollout graph from the wrong distribution. Measured on the AqSolDB
-        # concepts: rollouts averaged 22.5 heavy atoms against 18.1 at evaluation,
-        # i.e. RL trained on a +4.5-atom surplus that deployment does not have, and
-        # that surplus is exactly what produces macrocycles and disconnected
-        # fragments. Callers using a size distribution that ignores `condition`
-        # (e.g. CategoricalSizeDistribution) are unaffected.
+        # SizeDistribution recovers its target from `condition` and silently falls back to
+        # the base's marginal when it is absent -- so omitting it does not raise, it just
+        # draws every rollout graph from the wrong distribution. Measured in the research
+        # log on one concept-conditioned dataset: rollouts averaged 22.5 heavy atoms against
+        # 18.1 at evaluation, i.e. RL trained on a +4.5-atom surplus that deployment does
+        # not have, and that surplus is exactly what produces macrocycles and disconnected
+        # fragments. Callers using a size distribution that ignores `condition` (e.g.
+        # EmpiricalSizeDistribution) are unaffected.
         sampler.sample(self.rollout_size, num_nodes=self.num_nodes, size_dist=self.size_dist,
                        condition=cond, device=self.device, show_progress=False)
         X1, E1 = sampler.endpoint
@@ -562,10 +561,9 @@ class AdapterGDPOTrainer(GDPOTrainer):
 # ===========================================================================
 # Conditional property rewards
 # ===========================================================================
-# Promoted verbatim from experiments/adapter_rl_finetune__zinc.py, where they were the
-# reward used to produce the shipped first-party adapters. They live here because they are
-# training-loop code, and because a downstream refinement step needs them from the library
-# rather than from an experiment script.
+# Promoted verbatim from experiments/adapter_rl_finetune__zinc.py of the research package,
+# where they were the reward used to produce the recorded adapter results. They live here
+# because they are training-loop code.
 #
 # The CONNECTIVITY-FIRST tiering is the load-bearing part and must not be "simplified":
 #

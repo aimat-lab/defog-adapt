@@ -106,7 +106,7 @@ AROMATIC_V1 = Representation(
 #: Kekulized, with the dead hydrogen class removed. Two measured motivations:
 #:
 #: 1. 118 of 120 hard validity failures on the aromatic base are kekulization
-#:    errors and exactly one is a valence error (scripts/diagnose_validity.py).
+#:    errors and exactly one is a valence error (measured in the research log).
 #:    An AROMATIC bond class is a promise about the whole ring system that RDKit
 #:    checks by kekulizing; the model asserts it per-edge and cannot keep it.
 #:    Removing the class makes that failure impossible by construction. ZINC

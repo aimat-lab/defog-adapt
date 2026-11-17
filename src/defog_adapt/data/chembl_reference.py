@@ -2,19 +2,15 @@
 The frozen graph vocabulary of the ChEMBL foundation-model lineage.
 
 Unlike its neighbours in this package, this module does **not** retrieve an
-externally fixed split. ChEMBL ships no canonical train/test partition, so
-``scripts/prepare_chembl.py`` makes one (98/1/1, seed 42) and freezes it in
-``data/chembl/chembl_stats.json``. What this module owns is the other half of
-the contract -- the **vocabulary** -- which the released model card
-(``docs/CHEMBL_FOUNDATION_MODEL.md``) publishes as a public interface that
-adapters, guidance, RL and inpainting all bind to.
+externally fixed split. ChEMBL ships no canonical train/test partition, so one was made once
+(98/1/1, seed 42) in the research package and frozen alongside the model. What this module owns
+is the other half of the contract -- the **vocabulary** -- which adapters, guidance, RL and
+inpainting all bind to.
 
-It exists because that vocabulary was, until now, written out by hand in three
-places (``scripts/prepare_chembl.py``, ``scripts/train_chembl_ddp.py``,
-``experiments/training__chembl_uncond.py``) and nowhere that
-``defog_adapt.data.vocabulary`` could see. So the one tool whose entire job is to ask
-"why are this model's samples invalid?" -- ``scripts/diagnose_validity.py`` --
-could be pointed at ZINC, GuacaMol and MOSES but not at the foundation model.
+It exists so that the vocabulary is written down in one place that
+``defog_adapt.data.vocabulary`` can see, and a checkpoint can be checked against it the way it is
+for ZINC and MOSES: a model loaded under the wrong vocabulary still runs, and decodes every
+graph to a different molecule.
 
 The **union lineage reuses this vocabulary unchanged**: the ZINC-union ChEMBL
 model is the same frozen schema trained on more data, which is the point of
@@ -90,7 +86,7 @@ ATOM_WEIGHT: Dict[str, float] = {
 #: Normalizer for total molecular weight (at most 48 heavy atoms).
 MAX_ATOM_WEIGHT: float = 700.0
 
-#: Structural bounds enforced by ``scripts/prepare_chembl.py``.
+#: Structural bounds the ChEMBL training set was filtered to.
 MIN_HEAVY, MAX_HEAVY, MAX_RING = 3, 48, 8
 
 

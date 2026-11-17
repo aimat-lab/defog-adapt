@@ -1,5 +1,5 @@
 """
-Refactor parity gate for the GDPO trainer stack (docs/dam_design.md section 7).
+Refactor parity gate for the GDPO trainer stack.
 
 This test exists to make the ``RLTrainerBase`` extraction safe. It compares the
 FROZEN pre-refactor trainers in ``tests/_gdpo_frozen.py`` against the live ones in

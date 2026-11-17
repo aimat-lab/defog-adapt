@@ -697,8 +697,7 @@ def continuous_kl(ref, gen, num: int = 1000, eps: float = 1e-10) -> float:
 # Protocol-conforming validity reporting (E1)
 # ===========================================================================
 # Three validity numbers, because the literature contains at least three and a
-# table that does not say which one it used is not comparable to anything
-# (docs/unconditional-protocol.md, trap 3):
+# table that does not say which one it used is not comparable to anything:
 #
 #   relaxed_largest_frag  over-valent N/O/S repaired with a +1 formal charge,
 #                         then the largest connected fragment is taken. This is
