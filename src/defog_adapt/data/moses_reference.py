@@ -46,6 +46,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ._paths import default_root as _default_root
+
 # ===========================================================================
 # Pinned authority
 # ===========================================================================
@@ -143,8 +145,10 @@ def get_representation(name=None) -> Representation:
 DEFAULT_VAL_SIZE = 5000
 DEFAULT_SPLIT_SEED = 42
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = _PROJECT_ROOT / "data" / "moses"
+
+def default_root() -> Path:
+    """``$DEFOG_ADAPT_HOME/moses`` (default ``~/.cache/defog_adapt/moses``)."""
+    return _default_root("moses")
 
 
 class ReferenceDataError(RuntimeError):
@@ -160,7 +164,7 @@ def sha256_file(path, chunk_size: int = 1 << 20) -> str:
 
 
 def reference_paths(root=None) -> Dict[str, Path]:
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     return {s: root / f"{s}.csv" for s in MOSES_URLS}
 
 
@@ -171,7 +175,7 @@ def download_reference(root=None, *, force: bool = False) -> Dict[str, Path]:
     URL returns an LFS pointer stub rather than the data, which is why the media
     host is used here and why the size check below matters.
     """
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     root.mkdir(parents=True, exist_ok=True)
     paths = reference_paths(root)
 
@@ -293,13 +297,13 @@ def load_reference_split(
     *,
     val_size: int = DEFAULT_VAL_SIZE,
     split_seed: int = DEFAULT_SPLIT_SEED,
-    download: bool = True,
+    download: bool = False,
     allow_hash_mismatch: bool = False,
 ) -> MosesReferenceSplit:
     """Load MOSES's official split, with validation carved out of train."""
     import numpy as np
 
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     if download:
         download_reference(root)
     hashes = verify_reference(root, allow_hash_mismatch=allow_hash_mismatch)

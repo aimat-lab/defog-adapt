@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ._paths import default_root as _default_root
+
 # ===========================================================================
 # Pinned authority
 # ===========================================================================
@@ -85,8 +87,10 @@ AROMATIC = False
 DEFAULT_VAL_SIZE = 5000
 DEFAULT_SPLIT_SEED = 42
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = _PROJECT_ROOT / "data" / "zinc250k"
+
+def default_root() -> Path:
+    """``$DEFOG_ADAPT_HOME/zinc250k`` (default ``~/.cache/defog_adapt/zinc250k``)."""
+    return _default_root("zinc250k")
 
 
 class ReferenceDataError(RuntimeError):
@@ -107,7 +111,7 @@ def sha256_file(path, chunk_size: int = 1 << 20) -> str:
 
 def reference_paths(root=None) -> Dict[str, Path]:
     """Where the two source files live. Does not check that they exist."""
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     return {
         "csv": root / "zinc250k.csv",
         "test_idx": root / "valid_idx_zinc250k.json",
@@ -121,7 +125,7 @@ def download_reference(root=None, *, force: bool = False) -> Dict[str, Path]:
     disk rather than committed -- but they are pinned by hash, so a cached copy
     is as trustworthy as a fresh download and considerably faster.
     """
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     root.mkdir(parents=True, exist_ok=True)
     paths = reference_paths(root)
 
@@ -270,7 +274,7 @@ def load_reference_split(
     *,
     val_size: int = DEFAULT_VAL_SIZE,
     split_seed: int = DEFAULT_SPLIT_SEED,
-    download: bool = True,
+    download: bool = False,
     canonicalize: bool = True,
     allow_hash_mismatch: bool = False,
 ) -> ZincReferenceSplit:
@@ -285,7 +289,9 @@ def load_reference_split(
             stream numpy guarantees stable across versions -- ``random.sample``
             makes no such promise, and this split has to survive an interpreter
             upgrade.
-        download: Fetch the source files if absent.
+        download: Fetch the source files first (network). Off by default: loading data should not
+            silently reach for the network. If the files are absent the error says how to get them
+            (``download_reference()``, or pass ``download=True``).
         canonicalize: Return RDKit-canonical SMILES. Leave on unless you have a
             specific reason; downstream string comparisons assume it.
         allow_hash_mismatch: See :func:`verify_reference`.
@@ -295,7 +301,7 @@ def load_reference_split(
     """
     import numpy as np
 
-    root = Path(root) if root is not None else DEFAULT_ROOT
+    root = Path(root) if root is not None else default_root()
     if download:
         download_reference(root)
     hashes = verify_reference(root, allow_hash_mismatch=allow_hash_mismatch)

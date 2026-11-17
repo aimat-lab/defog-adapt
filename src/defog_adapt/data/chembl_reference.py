@@ -27,14 +27,13 @@ and stays the default so they keep decoding. ``kekulized_v2`` removes the
 AROMATIC bond class, mirroring the change that recovered 11.5 validity points
 on MOSES (0.884 -> 0.991, with kekulization failures going 0.108 -> 0).
 
-Whether that transfers to ChEMBL is **an open question at the time of writing,
-not an established one.** GuacaMol is aromatic over a near-identical 12-element
-vocabulary and reaches ~0.98, while this model sits at 0.845 -- so aromaticity
-alone does not explain the deficit, and ChEMBL's could have another cause
-(the 48-atom cap, charge reconstruction, or the deliberately unfiltered
-chemistry). ``scripts/diagnose_validity.py --dataset chembl`` is what settles
-it; ``kekulized_v2`` is defined here so that diagnosis can be run and acted on,
-not because the answer is known.
+It transfers to ChEMBL (measured in the research log). Encoding 50,000 training molecules
+and decoding them again, ``aromatic_v1`` cannot reproduce 14.1% of the data -- those molecules
+would score INVALID, 14.05% of them as kekulization failures -- against 0.02% for
+``kekulized_v2``. The aromatic representation is therefore lossy on the data itself, which forces
+a trade-off between matching the data distribution and emitting decodable molecules. In an A/B
+with every other setting identical, one training link of a kekulized model reached validity
+0.984 against 0.838 for the aromatic one (sanity 0.940 against 0.772).
 
 Two facts measured from ``chembl_stats.json`` before defining ``kekulized_v2``:
 
@@ -54,10 +53,14 @@ from __future__ import annotations
 import os
 from typing import Dict, List
 
+from ._paths import default_root as _default_root
 from .vocabulary import Representation, VocabularyMismatch  # noqa: F401
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_ROOT = os.path.join(_PROJECT_ROOT, "data", "chembl")
+
+def default_root() -> str:
+    """``$DEFOG_ADAPT_HOME/chembl`` (default ``~/.cache/defog_adapt/chembl``): where prepared
+    ChEMBL files are expected."""
+    return str(_default_root("chembl"))
 
 # ===========================================================================
 # Frozen schema
@@ -112,13 +115,11 @@ AROMATIC_V1 = Representation(
 #: on MOSES. All 12 atom classes are retained -- none is dead here (see the
 #: module docstring for counts), so there is no ``H``-equivalent to drop.
 #:
-#: NOT yet validated on ChEMBL. Two gates before anything is trained with it:
-#: (1) kekulization must be the dominant failure category in
-#:     ``diagnose_validity.py --dataset chembl``;
-#: (2) the encode/decode round trip must be lossless over the 2.44M training
-#:     molecules -- the exposure being charged aromatics (pyridinium, N-oxides,
-#:     azolium, nitro), because formal charge is not a generated channel and is
-#:     reconstructed at decode time.
+#: Validated on ChEMBL: kekulization is the dominant failure category (93% of the hard-invalid
+#: samples of a model trained on the aromatic schema), the encode/decode round trip loses 0.02% of
+#: training molecules against 14.07% for ``aromatic_v1``, and a controlled A/B gave validity
+#: 0.838 -> 0.984. The remaining round-trip loss is charge notation (formal charge is not a
+#: generated channel and is reconstructed at decode time), which both schemas share.
 KEKULIZED_V2 = Representation(
     name="kekulized_v2",
     atom_types=list(ATOM_TYPES),
