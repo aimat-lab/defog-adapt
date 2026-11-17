@@ -794,6 +794,71 @@ class AdapterGDPOTrainer(GDPOTrainer):
 
 
 # ===========================================================================
+# Unconditional sanity reward
+# ===========================================================================
+# Promoted from experiments/gdpo_sanity.py of the research package, where it was the reward
+# behind the recorded unconditional results (fewer disconnected molecules and oversized rings).
+# The distribution-fidelity penalty hooks that experiment could attach to it are not carried
+# over: the one recorded test of them was negative.
+
+
+class SanityReward:
+    """``r = valid + connected + rings_ok``, each 0 or 1, so ``r`` is in ``{0, 1, 2, 3}``.
+
+    Invalid short-circuits to 0: neither connectivity nor ring size can be assessed on a
+    molecule that does not parse, and scoring it below every valid molecule removes any
+    incentive to trade validity away for the other terms. ``connected`` is "no ``.`` in the
+    canonical SMILES"; ``rings_ok`` is every ring size within ``[ring_lo, ring_hi]``
+    (:func:`defog_adapt.domains.molecule.ring_sizes_ok`).
+
+    ``domain`` is anything with ``.identity(pyg_data) -> Optional[str]`` returning the canonical
+    SMILES iff the graph is a genuinely valid molecule (e.g. ``MoleculeDomain``). The category
+    rates of the last batch are left in ``self.last`` so a training curve can plot them.
+    """
+
+    invalid = 0.0
+
+    def __init__(self, domain, ring_lo: int = 3, ring_hi: int = 8):
+        self.domain = domain
+        self.ring_lo, self.ring_hi = ring_lo, ring_hi
+        self.last = {}
+
+    def __call__(self, X1, E1, node_mask):
+        from rdkit import Chem
+
+        from ..domains.molecule import ring_sizes_ok
+
+        n = node_mask.sum(-1)
+        datas = dense_to_pyg(X1, E1, None, node_mask, n)
+        out = torch.empty(len(datas))
+        n_valid = n_conn = n_rings = n_full = 0
+        for i, d in enumerate(datas):
+            smi = self.domain.identity(d)   # canonical SMILES iff genuinely valid
+            if smi is None:
+                out[i] = 0.0
+                continue
+            n_valid += 1
+            connected = "." not in smi
+            mol = Chem.MolFromSmiles(smi)
+            rings_ok = mol is not None and ring_sizes_ok(mol, self.ring_lo, self.ring_hi)
+            n_conn += connected
+            n_rings += rings_ok
+            n_full += connected and rings_ok
+            out[i] = 1.0 + float(connected) + float(rings_ok)
+        k = max(1, len(datas))
+        self.last = {
+            "valid_frac": n_valid / k,
+            "connected_frac": n_conn / k,
+            "rings_ok_frac": n_rings / k,
+            "sanity_frac": n_full / k,
+            "disconnected_frac": (n_valid - n_conn) / k,
+            "wonky_ring_frac": (n_valid - n_rings) / k,
+            "sanity_reward_mean": float(out.mean()),
+        }
+        return out
+
+
+# ===========================================================================
 # Conditional property rewards
 # ===========================================================================
 # Promoted verbatim from experiments/adapter_rl_finetune__zinc.py of the research package,
