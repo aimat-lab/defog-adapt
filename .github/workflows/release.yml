@@ -1,0 +1,72 @@
+name: Release
+
+# Publishing is deliberately NOT automatic on every push. It needs a version tag, and both indexes use
+# PyPI Trusted Publishing (OpenID Connect): there is no API token anywhere in this repository or its secrets.
+# Set the trusted publisher on the project's PyPI / TestPyPI settings page, and protect the two GitHub
+# environments below with a required reviewer so that a release always waits for a human.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish (a manual run never goes to the real index)"
+        type: choice
+        options: [testpypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/defog-adapt
+    permissions:
+      id-token: write            # Trusted Publishing: the OIDC token, not a stored secret
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true        # a dry run may already have uploaded this version
+
+  publish-pypi:
+    # Only a pushed version tag reaches the real index, and only after the TestPyPI upload succeeded.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/defog-adapt
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

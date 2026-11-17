@@ -48,7 +48,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Everything with a recorded result is molecular, so most users want this one.
-chem = ["rdkit>=2023.3", "pillow>=9", "scipy>=1.10"]
+chem = ["rdkit>=2023.3.1", "pillow>=9", "scipy>=1.10"]
 # Reference-split loaders (ZINC250k, MOSES) read CSVs with pandas.
 data = ["pandas>=1.4"]
 # GPU / host monitoring in TrainingMonitorCallback.

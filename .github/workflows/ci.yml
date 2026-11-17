@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Tiny tensors across every core thrash: without this the suite is many times slower.
+  OMP_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+  # A headless backend for the figures the callbacks build.
+  MPLBACKEND: Agg
+
+jobs:
+  test:
+    name: tests (Python ${{ matrix.python }}, current releases)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install (CPU PyTorch first, so the resolver does not pull a CUDA build)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[chem,data,dev]" pytest-xdist
+      - name: Unit tests
+        run: pytest -n auto -q --ignore=tests/parity
+
+  floors:
+    name: tests (Python 3.10, every dependency at its declared minimum)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Generate the minimum versions from pyproject.toml
+        run: python .github/scripts/floor_requirements.py > floors.txt && cat floors.txt
+      - name: Install them (CPU PyTorch first)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$(grep '^torch==' floors.txt)" --index-url https://download.pytorch.org/whl/cpu
+          grep -v '^torch==' floors.txt > floors-rest.txt
+          pip install -r floors-rest.txt pytest pytest-xdist
+          pip install -e . --no-deps
+      - name: Unit tests
+        run: pytest -n auto -q --ignore=tests/parity
+
+  build:
+    name: build, install the wheel, import and run the quickstart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the sdist and the wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+      - name: Install the wheel into a clean environment (not the source tree)
+        run: |
+          python -m venv /tmp/wheelenv
+          /tmp/wheelenv/bin/pip install --upgrade pip
+          /tmp/wheelenv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          /tmp/wheelenv/bin/pip install "$(ls dist/*.whl)[chem]"
+      - name: Import, from outside the checkout
+        run: |
+          cd /tmp
+          /tmp/wheelenv/bin/python -c "import defog_adapt, defog_adapt.core, defog_adapt.domains; \
+          assert 'site-packages' in defog_adapt.__file__, defog_adapt.__file__; print(defog_adapt.__version__)"
+      - name: The quickstart, against the installed wheel
+        run: /tmp/wheelenv/bin/python examples/quickstart_cpu.py --smoke
