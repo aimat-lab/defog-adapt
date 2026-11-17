@@ -392,9 +392,7 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
       model with an adapter via :meth:`check_compatible` rather than trusting a caller
       to have applied the right statistics.
     * **Sizes with zero marginal mass stay at probability zero**, at fit time and at
-      sampling time. This mirrors the invariant in ``DeFoGModel._blend_rates`` that
-      structurally-forbidden transitions stay forbidden: the model may reweight the
-      support, never extend it.
+      sampling time: the model may reweight the support, never extend it.
 
     Args:
         cond_dim: Width of the raw condition (1 for a scalar property).
@@ -651,14 +649,13 @@ class ComposedSizeDistribution(SizeDistribution):
         p(n \mid y_1 \ldots y_N) \;\propto\; P(n) \prod_i \frac{p_i(n \mid y_i)}{P(n)}
 
     which in log space is ``log P(n) + sum_i w_i [log p_i(n|y_i) - log P(n)]``,
-    renormalized. That is exactly the algebra ``DeFoGModel._blend_rates`` already applies
-    to rate matrices, with the dataset marginal in the role the frozen base plays there,
-    and the same ``product`` / ``mean`` modes as ``AdapterComposition``.
+    renormalized. That is the algebra ``DeFoGModel._blend_logp`` applies to the clean-graph
+    marginals, with the dataset marginal in the role the frozen base plays there, and the
+    same ``product`` / ``mean`` modes as ``AdapterComposition``.
 
-    Two things make this better behaved than the rate-matrix blend: the grid is ~30
-    categories, so the normalization is exact and needs none of the clamping that blend
-    requires; and the resulting entropy is available in closed form, so collapse is
-    observable rather than inferred (see :meth:`diagnostics`).
+    The grid is ~30 categories, so the normalization is exact and needs no clamping, and the
+    resulting entropy is available in closed form, so collapse is observable rather than
+    inferred (see :meth:`diagnostics`).
 
     **On the default mode.** ``product`` is correct only to the extent the branches carry
     independent information about ``n``, and the intuition that two size-correlated

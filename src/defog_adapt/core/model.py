@@ -952,19 +952,15 @@ class DeFoGModel(pl.LightningModule):
         masked = PlaceHolder(X=X_s, E=E_s, y=y_t).mask(node_mask)
         return masked.X, masked.E, y_t
 
-    # Backwards-compatible alias for the pre-refactor private name.
-    _sample_step = denoise_step
-
     @torch.no_grad()
     def _denoise_step_composed(self, t, s, X_t, E_t, y_t, node_mask, composition,
                                posterior_transform=None):
         """One CTMC denoise step under an N-branch adapter composition (product-of-
-        experts). Runs a SINGLE batched (N+1)*bs forward (group 0 = the negative
-        branch -- the frozen-base unconditional bypass, or, under autoguidance, a
-        degraded conditional; groups 1..N = each adapter's modulation), blends the
-        per-branch rate matrices geometrically in log space, and at the terminal
-        step decodes the blended clean-graph marginals. eta/omega are assumed
-        already set on the rate-matrix designer by the caller."""
+        experts). Runs a SINGLE batched (N+1)*bs forward (group 0 = the frozen-base
+        unconditional bypass; groups 1..N = each adapter's modulation), blends the
+        clean-graph marginals geometrically in log space, derives ONE rate matrix from the
+        result, and at the terminal step decodes the blended marginals. eta/omega are
+        assumed already set on the rate-matrix designer by the caller."""
         bs, n, _ = X_t.shape
         device = X_t.device
         dt = (s - t)[0]
@@ -999,34 +995,18 @@ class DeFoGModel(pl.LightningModule):
 
         w = composition.weights(device, dtype=pX.dtype)
 
-        if getattr(composition, "blend_space", "prob") == "prob":
-            # Blend the CLEAN-GRAPH MARGINALS, then derive ONE rate matrix from the
-            # result -- FreeGress Eq. 11's placement, in our geometric (PoE) form, so
-            # that only WHERE the blend happens changes, not HOW.
-            #
-            # The rate path below builds a rate matrix per branch, and
-            # compute_rate_matrices draws its own X_1 sample inside each one. Blending
-            # N+1 such matrices therefore mixes N+1 independent sampling draws; doing it
-            # here spends exactly one. It also makes the trajectory consistent with the
-            # terminal step, which has always PoE-blended clean log-probs.
-            qX = torch.log_softmax(self._blend_logp(pX, w, composition.mode), dim=-1)
-            qE = torch.log_softmax(self._blend_logp(pE, w, composition.mode), dim=-1)
-            R_t_X, R_t_E = self.rate_matrix_designer.compute_rate_matrices(
-                t, node_mask, X_t, E_t, qX.exp(), qE.exp()
-            )
-        else:
-            # per-branch rate matrices (each draws its own X_1 sample, as shipped 2-branch CFG does)
-            RXs, REs = [], []
-            for g in range(rep):
-                rx, re = self.rate_matrix_designer.compute_rate_matrices(
-                    t, node_mask, X_t, E_t, pX[g], pE[g]
-                )
-                RXs.append(rx)
-                REs.append(re)
-            RX, RE = torch.stack(RXs), torch.stack(REs)        # (N+1, bs, ...)
-
-            R_t_X = self._blend_rates(RX, w, composition.mode)
-            R_t_E = self._blend_rates(RE, w, composition.mode)
+        # Blend the CLEAN-GRAPH MARGINALS, then derive ONE rate matrix from the result --
+        # FreeGress Eq. 11's placement, in our geometric (PoE) form. compute_rate_matrices
+        # draws its own X_1 sample, so this spends exactly one draw, and it keeps the
+        # trajectory consistent with the terminal step, which PoE-blends the same clean
+        # log-probs. Blending one rate matrix per branch instead mixed N+1 independent
+        # draws and, above w=1, collapsed logP validity to 0.526 (MAE 5.59 at w=2, against
+        # 0.542 here).
+        qX = torch.log_softmax(self._blend_logp(pX, w, composition.mode), dim=-1)
+        qE = torch.log_softmax(self._blend_logp(pE, w, composition.mode), dim=-1)
+        R_t_X, R_t_E = self.rate_matrix_designer.compute_rate_matrices(
+            t, node_mask, X_t, E_t, qX.exp(), qE.exp()
+        )
 
         prob_X, prob_E = self._compute_step_probs(R_t_X, R_t_E, X_t, E_t, dt)
 
@@ -1047,53 +1027,17 @@ class DeFoGModel(pl.LightningModule):
         return masked.X, masked.E, y_t
 
     @staticmethod
-    def _blend_rates(R, w, mode):
-        """Product-of-experts geometric blend of per-branch rate matrices in log
-        space. R: (N+1, ...), group 0 = uncond. RE-STABILIZED after the blend
-        (nan_to_num + >1e5 clamp, matching RateMatrixDesigner._stabilize) since
-        w>1 with a small R_uncond can make the log-ratio deviation explode;
-        structurally-forbidden transitions (R_uncond==0) stay forbidden."""
-        eps = 1e-6
-        lu = torch.log(R[0] + eps)
-        lc = torch.log(R[1:] + eps)                        # (N, ...)
-        dev = torch.einsum("i,i...->...", w, lc - lu)
-        if mode == "mean":
-            dev = dev / w.numel()
-        Rb = (lu + dev).exp()
-        Rb = torch.nan_to_num(Rb)
-        Rb = torch.where(Rb > 1e5, torch.zeros_like(Rb), Rb)
-        Rb = torch.where(R[0] == 0, torch.zeros_like(Rb), Rb)
-        return Rb
-
-    @staticmethod
     def _blend_logp(p, w, mode):
-        """Same PoE blend on clean-graph softmax marginals -> unnormalized log q
-        (argmax is normalization-invariant). p: (N+1, ...), group 0 = the NEGATIVE
-        branch: the unconditional base normally, a degraded conditional under
-        autoguidance. The arithmetic is identical either way -- only what fills
-        group 0 changes -- which is why autoguidance needed no change here.
-
-        ``w`` is either ``(N,)`` -- one weight per branch, shared by the batch -- or
-        ``(N, bs)``, one weight per branch PER MOLECULE. The second form exists for
-        closed-loop control, where each molecule carries its own error signal and so
-        earns its own guidance strength; collapsing that to a batch mean would average
-        away the very thing being tested.
-        """
+        """Product-of-experts blend of clean-graph softmax marginals -> unnormalized log q
+        (argmax is normalization-invariant). ``p``: (N+1, ...), group 0 = the unconditional
+        base, groups 1..N = the adapter branches; ``w``: (N,), one CFG weight per branch.
+        ``mode`` "product" sums the branches' log-ratios, "mean" averages them."""
         eps = 1e-8
         lu = torch.log(p[0] + eps)
         lc = torch.log(p[1:] + eps)
-        if w.dim() == 1:
-            dev = torch.einsum("i,i...->...", w, lc - lu)
-            n_branches = w.numel()
-        elif w.dim() == 2:
-            diff = lc - lu                                   # (N, bs, ...)
-            wb = w.reshape(*w.shape, *([1] * (diff.dim() - 2)))
-            dev = (wb * diff).sum(0)
-            n_branches = w.shape[0]
-        else:
-            raise ValueError(f"weights must be (N,) or (N, bs); got {tuple(w.shape)}")
+        dev = torch.einsum("i,i...->...", w, lc - lu)
         if mode == "mean":
-            dev = dev / n_branches
+            dev = dev / w.numel()
         return lu + dev
 
     def _compute_step_probs(

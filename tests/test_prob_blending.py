@@ -1,25 +1,21 @@
-"""Blending branches in probability space instead of rate space.
+"""Adapter branches are blended in probability space.
 
-`AdapterComposition.blend_space` selects WHERE the product-of-experts blend is applied:
+The predicted clean-graph marginals of the branches are blended (a geometric product of
+experts) and ONE rate matrix is derived from the result. An earlier placement built a rate
+matrix per branch and blended those; it is not part of this package, because above w=1 it
+collapsed validity (logP, w=2: validity 0.526 and MAE 5.59, against 0.982 and 0.542 here).
 
-  "prob"  blend the clean-graph marginals, derive ONE rate matrix from the result
-          (the default since 2026-08-17)
-  "rate"  build a rate matrix per branch, blend those
-          (historical; retained so pre-2026-08-17 numbers reproduce)
-
-The form of the blend (geometric / PoE) is identical either way, so these tests are
-about placement only.
-
-The load-bearing test is `test_single_branch_w1_agrees_with_rate_space`: with one branch
-at w=1 both paths reduce algebraically to R(p_cond), so they MUST agree. If they do not,
-the prob-space path is wrong. Everything else follows from that.
+These tests pin the properties that make the probability-space placement what it claims to be:
+the algebra of the blend, one rate matrix per step regardless of the number of branches, the
+default weight, and the end-to-end paths. (The comparison against the removed placement lives in
+the research log, not here: it needs the removed code to run.)
 """
 
 import pytest
 import torch
 
 from defog_adapt.core import (AdaLNAdapter, AdapterComposition, AdaptedSampler,
-                        ConditionBranch, DeFoGModel)
+                              ConditionBranch, DeFoGModel)
 from defog_adapt.core.data import to_dense
 
 from defog_adapt.domains.molecule import build_encoders, smiles_to_pyg_data
@@ -66,214 +62,106 @@ def a_trained_adapter(model, seed=0):
     return adapter
 
 
-def step(model, comp, noisy, mask, t_val=0.5, dt=0.05):
+def count_rate_matrix_calls(model, comp, noisy, mask):
+    """How many times one composed denoise step asks for a rate matrix."""
     bs = noisy["X_t"].size(0)
-    t = torch.full((bs, 1), t_val)
-    s = t + dt
-    torch.manual_seed(123)                      # the step itself samples; pin it
-    return model.denoise_step(t, s, noisy["X_t"], noisy["E_t"], noisy["y_t"], mask,
-                              eta=0.0, omega=0.0, composition=comp)
-
-
-def blended_rate(model, comp, noisy, mask, t_val=0.5, pin_draw=True):
-    """The blended rate matrix a step would actually use.
-
-    ``compute_rate_matrices`` IS stochastic -- it draws its own X_1 sample internally.
-    The rate path calls it N+1 times and the prob path once, so the two consume the RNG
-    differently and their outputs differ even where the algebra says they should not.
-    ``pin_draw`` reseeds immediately before every call so all of them share one draw,
-    which is the only way to compare the two placements rather than two noise
-    realisations.
-    """
-    bs = noisy["X_t"].size(0)
-    t = torch.full((bs, 1), t_val)
+    t = torch.full((bs, 1), 0.5)
     designer = model.rate_matrix_designer
     real = designer.compute_rate_matrices
-    if pin_draw:
-        def pinned(*a, **kw):
-            torch.manual_seed(4242)
-            return real(*a, **kw)
-        designer.compute_rate_matrices = pinned
-    got = {}
-    real_step = model._compute_step_probs
+    n = [0]
 
-    def spy(RX, RE, X_t, E_t, dt):
-        got["RX"], got["RE"] = RX.clone(), RE.clone()
-        return real_step(RX, RE, X_t, E_t, dt)
+    def counted(*a, **kw):
+        n[0] += 1
+        return real(*a, **kw)
 
-    model._compute_step_probs = spy
+    designer.compute_rate_matrices = counted
     try:
         torch.manual_seed(123)
         model.denoise_step(t, t + 0.05, noisy["X_t"], noisy["E_t"], noisy["y_t"], mask,
                            eta=0.0, omega=0.0, composition=comp)
     finally:
-        model._compute_step_probs = real_step
         designer.compute_rate_matrices = real
-    return got["RX"], got["RE"]
+    return n[0]
 
 
-class TestPlacementEquivalence:
-    def test_at_w1_the_paths_differ_only_by_the_base_veto(self):
-        """THE correctness test, and it is not the equivalence I first assumed.
+class TestBlendAlgebra:
+    """The blend itself, on tensors, with no model in the way."""
 
-        At w=1 the rate-space blend is exp(log R_unc + (log R_cond - log R_unc)) = R_cond
-        -- EXCEPT for the last line of _blend_rates, `where(R[0] == 0, 0, Rb)`, which
-        forces every transition the UNCONDITIONAL model assigns zero rate to stay zero.
-        The prob-space path derives one rate matrix from the blended marginals and carries
-        no such veto.
+    @staticmethod
+    def _marginals(n_branches, seed=0):
+        g = torch.Generator().manual_seed(seed)
+        p = torch.rand(n_branches + 1, 2, 3, 5, generator=g) + 0.05
+        return p / p.sum(-1, keepdim=True)
 
-        So the two agree exactly on entries the base allows, and differ exactly on the
-        entries it forbids. That is a real semantic change, not a rounding difference:
-        prob-space blending lets the adapter re-open transitions the frozen base has
-        ruled out.
-        """
+    def test_single_branch_at_w1_is_the_conditional(self):
+        """The load-bearing identity: with one branch at w=1 the product of experts is
+        lu + (lc - lu) = lc, i.e. exactly the conditional's own marginals."""
+        p = self._marginals(1)
+        q = DeFoGModel._blend_logp(p, torch.tensor([1.0]), "product")
+        assert torch.allclose(q, torch.log(p[1] + 1e-8), atol=1e-6)
+
+    def test_zero_weight_is_the_unconditional(self):
+        p = self._marginals(1)
+        q = DeFoGModel._blend_logp(p, torch.tensor([0.0]), "product")
+        assert torch.allclose(q, torch.log(p[0] + 1e-8), atol=1e-6)
+
+    def test_product_sums_the_log_ratios_and_mean_averages_them(self):
+        p = self._marginals(2)
+        w = torch.tensor([1.5, 0.5])
+        lu, lc = torch.log(p[0] + 1e-8), torch.log(p[1:] + 1e-8)
+        want = lu + 1.5 * (lc[0] - lu) + 0.5 * (lc[1] - lu)
+        assert torch.allclose(DeFoGModel._blend_logp(p, w, "product"), want, atol=1e-6)
+        mean = DeFoGModel._blend_logp(p, w, "mean")
+        assert torch.allclose(mean, lu + (want - lu) / 2, atol=1e-6)
+
+    def test_w_above_one_extrapolates_past_the_conditional(self):
+        """The reason w=2 is usable: in log space it moves FURTHER from the base than the
+        conditional itself, in the direction the conditional already points."""
+        p = self._marginals(1)
+        lu, lc = torch.log(p[0] + 1e-8), torch.log(p[1] + 1e-8)
+        q2 = DeFoGModel._blend_logp(p, torch.tensor([2.0]), "product")
+        assert torch.allclose(q2 - lu, 2.0 * (lc - lu), atol=1e-6)
+
+
+class TestOneRateMatrixPerStep:
+    def test_a_single_branch_derives_one_rate_matrix(self):
+        """compute_rate_matrices draws its own X_1 sample, so blending per-branch rate
+        matrices mixed N+1 independent draws. Blending marginals first spends exactly one."""
         model, loader = build_tiny_model()
         noisy, mask, bs = a_state(model, loader)
-        adapter = a_trained_adapter(model)
-        cond = torch.full((bs, 1), 0.7)
+        comp = AdapterComposition(
+            [ConditionBranch(a_trained_adapter(model), torch.full((bs, 1), 0.7), 1.0)])
+        assert count_rate_matrix_calls(model, comp, noisy, mask) == 1
 
-        Rr, _ = blended_rate(model, AdapterComposition(
-            [ConditionBranch(adapter, cond, 1.0)], blend_space="rate"), noisy, mask)
-        Rp, _ = blended_rate(model, AdapterComposition(
-            [ConditionBranch(adapter, cond, 1.0)], blend_space="prob"), noisy, mask)
-
-        vetoed = Rr == 0                       # what the rate path zeroed out
-        allowed = ~vetoed
-        assert torch.allclose(Rr[allowed], Rp[allowed], atol=1e-4), \
-            "on entries the base allows, w=1 must give the same rate matrix"
-
-    def test_the_difference_is_distributional_not_pointwise(self):
-        """Why the equivalence test above has to pin the RNG, and what it hides.
-
-        `rate_matrix.py` builds R from a DISCRETE SAMPLE of X_1, not from the marginal:
-        `sampled = sample_from_probs(X_1_pred, E_1_pred, node_mask)`. So R is a step
-        function of p, and pinning one uniform draw makes it locally constant -- which is
-        exactly why the pinned comparison collapses to equality.
-
-        The real difference is which distribution X_1 is drawn from:
-          rate  -- draw from p_uncond AND from p_cond, geometrically average the two
-                   resulting rate matrices
-          prob  -- blend the marginals, draw ONCE from the guided distribution
-        The second is what classifier-free guidance means. At w=1 the guided distribution
-        IS p_cond, so both reduce to one draw from p_cond and the two are distributionally
-        identical. At w!=1 they are not.
-        """
+    def test_two_branches_still_derive_one_rate_matrix(self):
         model, loader = build_tiny_model()
         noisy, mask, bs = a_state(model, loader)
-        adapter = a_trained_adapter(model)
-        cond = torch.full((bs, 1), 0.7)
-
-        def mean_rate(space, w, draws=60):
-            comp = AdapterComposition([ConditionBranch(adapter, cond, w)], blend_space=space)
-            acc = None
-            for s in range(draws):
-                R, _ = blended_rate(model, comp, noisy, mask, pin_draw=False)
-                acc = R.clone() if acc is None else acc + R
-            return acc / draws
-
-        torch.manual_seed(0)
-        same_w1 = (mean_rate("rate", 1.0) - mean_rate("prob", 1.0)).abs().max()
-        torch.manual_seed(0)
-        diff_w3 = (mean_rate("rate", 3.0) - mean_rate("prob", 3.0)).abs().max()
-
-        # w=1: both are one draw from p_cond, so the expected rate matrices agree.
-        # w=3: genuinely different computations, so they must not.
-        assert diff_w3 > same_w1, (
-            f"expected the placements to diverge at w=3 (got {diff_w3:.4f}) more than they "
-            f"do at w=1 (got {same_w1:.4f}); if not, the flag is doing nothing")
-
-    def test_rate_path_spends_more_random_draws_than_prob_path(self):
-        """The estimator-noise argument, measured rather than asserted.
-
-        compute_rate_matrices draws an X_1 sample per call. Blending N+1 rate matrices
-        therefore mixes N+1 independent draws; blending marginals first spends one."""
-        model, loader = build_tiny_model()
-        noisy, mask, bs = a_state(model, loader)
-        adapter = a_trained_adapter(model)
-        cond = torch.full((bs, 1), 0.7)
-        designer = model.rate_matrix_designer
-        real = designer.compute_rate_matrices
-        counts = {}
-        for space in ("rate", "prob"):
-            n = [0]
-
-            def counted(*a, _n=n, **kw):
-                _n[0] += 1
-                return real(*a, **kw)
-
-            designer.compute_rate_matrices = counted
-            try:
-                comp = AdapterComposition([ConditionBranch(adapter, cond, 1.0)],
-                                          blend_space=space)
-                t = torch.full((bs, 1), 0.5)
-                torch.manual_seed(123)
-                model.denoise_step(t, t + 0.05, noisy["X_t"], noisy["E_t"], noisy["y_t"],
-                                   mask, eta=0.0, omega=0.0, composition=comp)
-            finally:
-                designer.compute_rate_matrices = real
-            counts[space] = n[0]
-        assert counts["rate"] == 2, counts        # uncond + one conditional branch
-        assert counts["prob"] == 1, counts
+        comp = AdapterComposition(
+            [ConditionBranch(a_trained_adapter(model, seed=1), torch.full((bs, 1), 0.7), 1.0),
+             ConditionBranch(a_trained_adapter(model, seed=2), torch.full((bs, 1), -0.3), 1.0)])
+        assert count_rate_matrix_calls(model, comp, noisy, mask) == 1
 
 
 class TestDefaults:
-    def test_default_is_prob_space(self):
-        """Flipped on 2026-08-17. This assertion IS the ship decision: prob-space
-        blending was measured, recorded in PLAN.md Wave 2, and then left unmerged for
-        three days while every downstream caller kept silently using rate space."""
-        assert AdapterComposition([]).blend_space == "prob"
-
     def test_default_branch_weight_is_two(self):
-        """The weight default moved with the blend space, and only makes sense with it.
-        w=2 in rate space collapses logP to MAE 5.59 / validity 0.526; in prob space it
-        is the optimum (0.5420 against 0.6410 at w=1)."""
+        """w=2 is the measured optimum in probability space (logP MAE 0.5420 against
+        0.6410 at w=1)."""
         model, _ = build_tiny_model()
         adapter = a_trained_adapter(model)
         assert ConditionBranch(adapter, torch.tensor([[0.7]])).weight == 2.0
 
-    def test_default_path_is_byte_identical_to_explicit_prob(self):
-        model, loader = build_tiny_model()
-        noisy, mask, bs = a_state(model, loader)
-        adapter = a_trained_adapter(model)
-        cond = torch.full((bs, 1), 0.7)
-        default = AdapterComposition([ConditionBranch(adapter, cond, 1.5)])
-        explicit = AdapterComposition([ConditionBranch(adapter, cond, 1.5)], blend_space="prob")
-        Xa, Ea, _ = step(model, default, noisy, mask)
-        Xb, Eb, _ = step(model, explicit, noisy, mask)
-        assert torch.equal(Xa, Xb) and torch.equal(Ea, Eb)
-
-    def test_rate_space_is_still_reachable(self):
-        """Reproducing a pre-2026-08-17 number requires the old path to still run.
-
-        Reachability only. It is tempting to also assert the two paths give DIFFERENT
-        graphs here, and that assertion fails: on this toy model a pinned single step
-        puts the two rate matrices within 1e-6 and samples the same graph. That is not a
-        bug, it is the point of `test_the_difference_is_distributional_not_pointwise` --
-        R is built from a discrete draw, so pinning the draw makes it locally constant.
-        Dispatch is proven by `test_rate_path_spends_more_random_draws_than_prob_path`
-        (2 calls vs 1), which is a structural fact rather than a sampling outcome.
-        """
-        model, loader = build_tiny_model()
-        noisy, mask, bs = a_state(model, loader)
-        adapter = a_trained_adapter(model)
-        cond = torch.full((bs, 1), 0.7)
-        comp = AdapterComposition([ConditionBranch(adapter, cond, 2.0)], blend_space="rate")
-        assert comp.blend_space == "rate"
-        X, E, _ = step(model, comp, noisy, mask)
-        assert torch.isfinite(X.float()).all() and torch.isfinite(E.float()).all()
-
-    def test_rejects_unknown_blend_space(self):
-        with pytest.raises(AssertionError, match="unknown blend_space"):
-            AdapterComposition([], blend_space="probability")
+    def test_blend_space_is_not_a_parameter(self):
+        """Rate-space blending was removed. Passing the old keyword must fail loudly, not be
+        swallowed and silently run the other placement."""
+        with pytest.raises(TypeError):
+            AdapterComposition([], blend_space="rate")
 
 
 class TestEndToEnd:
-    @pytest.mark.parametrize("space", ["rate", "prob"])
-    def test_sampling_produces_valid_graphs(self, space):
+    def test_sampling_produces_valid_graphs(self):
         model, loader = build_tiny_model()
         adapter = a_trained_adapter(model)
-        comp = AdapterComposition(
-            [ConditionBranch(adapter, torch.tensor([[0.7]]), 1.5)], blend_space=space)
+        comp = AdapterComposition([ConditionBranch(adapter, torch.tensor([[0.7]]), 1.5)])
         torch.manual_seed(7)
         out = AdaptedSampler(model, comp, sample_steps=5, eta=0.0, omega=0.0).sample(
             num_samples=3, show_progress=False)
@@ -283,12 +171,12 @@ class TestEndToEnd:
             assert g.edge_index.shape[0] == 2
             assert torch.isfinite(g.x.float()).all()
 
-    def test_two_branch_composition_runs_in_prob_space(self):
+    def test_two_branch_composition_runs(self):
         model, loader = build_tiny_model()
         a1, a2 = a_trained_adapter(model, seed=1), a_trained_adapter(model, seed=2)
         comp = AdapterComposition(
             [ConditionBranch(a1, torch.tensor([[0.7]]), 1.0),
-             ConditionBranch(a2, torch.tensor([[-0.3]]), 1.0)], blend_space="prob")
+             ConditionBranch(a2, torch.tensor([[-0.3]]), 1.0)])
         torch.manual_seed(7)
         out = AdaptedSampler(model, comp, sample_steps=5, eta=0.0, omega=0.0).sample(
             num_samples=3, show_progress=False)

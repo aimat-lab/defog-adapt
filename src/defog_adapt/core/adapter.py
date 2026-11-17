@@ -653,13 +653,8 @@ class ConditionBranch:
     """One condition in a composition: an adapter, a RAW target (the adapter
     normalizes internally), and its CFG weight ``w``.
 
-    The default is 2.0, which is the measured optimum for prob-space blending on
-    both logP and QED. It was 1.0 for as long as blending happened in RATE space,
-    where w>1 is not merely suboptimal but broken: the blend extrapolates past the
-    conditional and ``_stabilize``'s clamp silently drops rates, collapsing logP
-    validity to 0.526 and MAE to 5.59 at w=2. That is a property of the old blend
-    space, not of the task -- see :class:`AdapterComposition`. With ``blend_space
-    ="prob"`` the same w=2 gives the best MAE we have measured.
+    The default is 2.0, the measured optimum for logP and QED. Branches are blended in
+    probability space (see :class:`AdapterComposition`), which is what makes w>1 usable at all.
     """
     adapter: AdaLNAdapter
     condition: torch.Tensor
@@ -671,32 +666,20 @@ class AdapterComposition:
     ``AdaptedSampler``. ``mode='product'`` sums the log-ratios; ``'mean'`` averages
     (recommended for N>1 to keep the effective uncond coefficient bounded)."""
 
-    def __init__(self, branches: Sequence[ConditionBranch], base=None, mode: str = "product",
-                 blend_space: str = "prob"):
+    def __init__(self, branches: Sequence[ConditionBranch], base=None, mode: str = "product"):
         """
         ``mode`` is the FORM of the blend (geometric product vs its per-branch mean).
-        ``blend_space`` is WHERE it is applied, and the two are independent axes:
 
-        * ``"prob"`` (default) -- blend the predicted clean-graph marginals and derive
-          ONE rate matrix from the result. This is where FreeGress applies guidance
-          (Eq. 10/11), it spends a single ``X_1`` draw, and it makes the trajectory
-          consistent with the terminal step, which has always blended clean log-probs.
-        * ``"rate"`` -- build a rate matrix per branch and blend those.
-          ``compute_rate_matrices`` draws its own ``X_1`` sample inside each call, so
-          an N-branch blend mixes N+1 independent draws. Retained so that every number
-          reported before 2026-08-17 reproduces exactly.
-
-        The two are equivalent at w=1 (measured: paired mean -0.0034 over 100 targets,
-        51/100, Wilcoxon p=0.72) and diverge sharply above it: at w=2 the rate path
-        collapses to logP MAE 5.59 / validity 0.526 while prob gives 0.5420 / 0.982.
-        "w=1 always wins" was an artifact of the blend space, which is why the default
-        moved here and why :class:`ConditionBranch` now defaults to w=2.
+        The blend is applied to the predicted clean-graph MARGINALS, and ONE rate matrix is
+        derived from the result. That is where FreeGress applies guidance (Eq. 10/11); it
+        spends a single ``X_1`` draw, and it keeps the trajectory consistent with the
+        terminal step, which blends the same clean log-probs. Blending a rate matrix per
+        branch instead breaks above w=1: at w=2 it collapsed logP validity to 0.526 and MAE
+        to 5.59, against 0.982 and 0.542 here, so that placement is not offered.
         """
         assert mode in ("product", "mean")
-        assert blend_space in ("rate", "prob"), f"unknown blend_space {blend_space!r}"
         self.branches = list(branches)
         self.mode = mode
-        self.blend_space = blend_space
         # Cross-attention branches stack. Modulation carries them as (row_slice, closure)
         # per layer and stack_groups re-homes each closure onto its own group's rows, so a
         # second branch is one more entry at a different offset. This was refused while
