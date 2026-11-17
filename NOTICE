@@ -1,0 +1,41 @@
+defog-adapt
+Copyright (c) 2026 Jonas Teufel
+
+This package is derived from DeFoG (Discrete Flow Matching for Graph Generation):
+
+    Yiming Qin, Manuel Madeira, Dorina Thanou, Pascal Frossard.
+    "DeFoG: Discrete Flow Matching for Graph Generation." ICML 2025.
+    https://arxiv.org/abs/2410.04263
+    https://github.com/qym7/DeFoG
+
+The base model (graph transformer, noise distributions, rate-matrix construction, time
+distortion, RRWP features) follows the upstream implementation, which is MIT licensed
+(Copyright (c) 2012-2025 Manuel Madeira, Yiming Qin; see LICENSE). The upstream notice is
+retained as required.
+
+Provenance. The code in this package was ported from a research fork of DeFoG (commit
+68637b5 of that fork), keeping only the features that have a recorded positive result there.
+Features that were tried and failed, came out null, or were never tried are not included.
+Frozen-base adapters, Feynman-Kac steering, GDPO reinforcement-learning fine-tuning, learned
+size conditioning and the molecular domain code were added in that fork.
+
+Methods used in this package, and the papers they come from (titles and authors as listed on
+arXiv):
+
+    DeFoG: Discrete Flow Matching for Graph Generation (base model)
+        Qin, Madeira, Thanou, Frossard.                        arXiv:2410.04263
+    Discrete Feynman-Kac Correctors (Feynman-Kac / SMC steering)
+        Hasan, Ohanesian, Gazizov, Bengio, Aspuru-Guzik,
+        Bondesan, Skreta, Neklyudov.                           arXiv:2601.10403
+    Graph Diffusion Policy Optimization (GDPO reinforcement-learning fine-tuning)
+        Liu, Du, Pang, Li, Lin, Chen.                          arXiv:2402.16302
+    Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional
+    Domains (Fourier condition bands in the adapter)
+        Tancik, Srinivasan, Mildenhall, Fridovich-Keil, Raghavan,
+        Singhal, Ramamoorthi, Barron, Ng.                      arXiv:2006.10739
+    Classifier-free graph diffusion for molecular property targeting (FreeGress; the
+    node-count conditioning idea and the property-targeting evaluation protocol)
+        Ninniri, Podda, Bacciu.                                arXiv:2312.17397
+
+The implementations here are independent adaptations to DeFoG's categorical outputs, not the
+authors' code. Any error in them is this package's.
