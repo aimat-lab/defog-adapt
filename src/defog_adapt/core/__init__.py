@@ -203,4 +203,3 @@ __all__ = [
     "compute_loss_components",
 ]
 
-__version__ = "0.1.0"
