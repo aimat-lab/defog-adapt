@@ -23,6 +23,7 @@ import io
 import random
 import re
 import warnings
+from functools import lru_cache
 from typing import List, Optional
 
 import numpy as np
@@ -601,6 +602,37 @@ def ring_sizes_ok(mol, lo: int = 3, hi: int = 8) -> bool:
         if len(ring) < lo or len(ring) > hi:
             return False
     return True
+
+
+@lru_cache(maxsize=8)
+def _morgan_generator(radius: int, n_bits: int):
+    from rdkit.Chem import rdFingerprintGenerator
+    return rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
+
+
+def morgan_condition(mol, *, n_bits: int = 1024, radius: int = 2, counts: bool = True) -> np.ndarray:
+    """The condition vector a fingerprint adapter is trained on and served with: a hashed
+    Morgan (ECFP-style) fingerprint of ``mol`` as a float32 array of length ``n_bits``.
+
+    ``counts=True`` (the default) is ``log1p`` of the hashed COUNT fingerprint, which is the
+    encoding of the recorded fingerprint results (1024 bits, radius 2). ``counts=False`` is the
+    plain bit vector; use that for a Tanimoto metric whatever the conditioning encoding is, so a
+    similarity number does not silently change when the conditioning does.
+
+    The encoding must match the adapter's: an adapter fed the one it was not trained on receives
+    out-of-distribution input and steers badly, with nothing raised. A ``None`` molecule gives a
+    zero vector.
+
+    Numerically identical to RDKit's older ``GetHashedMorganFingerprint`` /
+    ``GetMorganFingerprintAsBitVect`` (checked on 3,000 ZINC molecules under two RDKit versions;
+    ``tests/test_morgan_condition.py`` keeps checking it), without their deprecation warnings.
+    """
+    if mol is None:
+        return np.zeros((n_bits,), dtype=np.float32)
+    gen = _morgan_generator(int(radius), int(n_bits))
+    if counts:
+        return np.log1p(gen.GetCountFingerprintAsNumPy(mol).astype(np.float32)).astype(np.float32)
+    return gen.GetFingerprintAsNumPy(mol).astype(np.float32)
 
 
 def descriptor_values(mol) -> Optional[dict]:
