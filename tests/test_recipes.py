@@ -72,8 +72,9 @@ def ckpt(name):
 @pytest.mark.parametrize("dataset", ["zinc", "moses"])
 def test_the_e1_recipe_trains_and_evaluates(workdir, dataset):
     out = run(workdir, "training__e1.py", "--DATASET", f"'{dataset}'", "--__TESTING__", "True")
-    assert "EXPERIMENT COMPLETED" in out
+    # The recipe's own last words, not PyComex's banner (which differs between PyComex versions).
     assert "validity (relaxed, largest fragment)" in out
+    assert "Done. FCD and the other benchmark metrics are not computed here." in out
 
 
 @needs_examples
@@ -84,7 +85,7 @@ def test_the_sanity_rl_recipe_runs_and_never_overwrites_its_base(workdir, tmp_pa
     base = ckpt("zinc_e1_seed42_kek")
     out = run(workdir, "rl_sanity__zinc.py", "--__TESTING__", "True", "--BASE_CKPT", f"'{base}'",
               "--OUT_CKPT_DIR", f"'{tmp_path / 'rl_out'}'")
-    assert "EXPERIMENT COMPLETED" in out and "vocabulary check OK" in out
+    assert "vocabulary check OK" in out and "FCD and scaffold similarity are NOT computed here" in out
     assert (tmp_path / "rl_out" / "best_model.ckpt").exists()
 
 
@@ -109,7 +110,7 @@ def test_the_sanity_rl_recipe_refuses_to_write_into_the_base_directory(workdir):
 def test_the_adapter_training_recipe_trains_saves_and_evaluates(workdir):
     out = run(workdir, "adapter_training__zinc.py", "--__TESTING__", "True", "--BASE_CKPT",
               f"'{ckpt('zinc_kek_base')}'")
-    assert "EXPERIMENT COMPLETED" in out and "saved adapter ->" in out and "PROBE(w=" in out
+    assert "saved adapter ->" in out and "PROBE(w=" in out and "\nDone." in out
 
 
 @needs_examples
@@ -165,5 +166,5 @@ def test_the_adapter_rl_recipe_runs_with_a_head_reward_and_a_size_model(workdir)
               "--HEAD_CKPT", f"'{ckpt('heads_kek/logp_head.ckpt')}'",
               "--SIZE_MODEL_CKPT", f"'{ckpt('heads_kek/logp_head_size.ckpt')}'",
               "--PROPERTY", "'logp'")
-    assert "EXPERIMENT COMPLETED" in out and "operating point: rollout/scored/probe weight 1.5" in out
-    assert "saved the RL adapter" in out
+    assert "operating point: rollout/scored/probe weight 1.5" in out
+    assert "saved the RL adapter" in out and "\nDone." in out

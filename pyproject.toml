@@ -53,8 +53,10 @@ chem = ["rdkit>=2023.3", "pillow>=9", "scipy>=1.10"]
 data = ["pandas>=1.4"]
 # GPU / host monitoring in TrainingMonitorCallback.
 monitor = ["psutil", "pynvml"]
-# The runnable PyComex experiments under examples/.
-recipes = ["defog-adapt[chem,data]", "pycomex>=0.16"]
+# The runnable PyComex experiments under examples/. The floor is the version the recorded runs used:
+# the recipes' smoke tests pass on it and on the latest. PyComex caps numpy<2 from 0.2x on, so this
+# extra resolves to a numpy 1.x stack where the plain extras do not.
+recipes = ["defog-adapt[chem,data]", "pycomex>=0.13.1"]
 dev = ["pytest>=7", "build", "twine"]
 all = ["defog-adapt[chem,data,monitor,recipes,dev]"]
 
