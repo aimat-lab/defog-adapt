@@ -30,16 +30,20 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 
-# Import-time truth for ``import defog_adapt`` (audited, not guessed). The lower bounds are
-# PROVISIONAL: they are inherited from the research repo and get replaced by what a
-# ``--resolution lowest-direct`` CI run actually supports (phase P3).
+# Import-time truth for ``import defog_adapt``. Every lower bound below was TESTED: the full suite
+# passes with all of them installed at exactly these versions (Python 3.10; extras included).
+# Two of them are higher than they look because of what was found doing that:
+#   * pytorch_lightning>=2.4: 2.0-2.3 import ``pkg_resources`` (gone from setuptools >= 81), so
+#     they cannot be imported in a current environment at all.
+#   * torch>=2.1: what pytorch_lightning 2.4 itself requires, so the floors have to move together.
+#   * matplotlib>=3.5.3: 3.5.0 crashes on import under some Python builds (a Tk probe).
 dependencies = [
-    "torch>=2.0",
+    "torch>=2.1",
     "torch_geometric>=2.3",
-    "pytorch_lightning>=2.0",
+    "pytorch_lightning>=2.4",
     "numpy>=1.23",
     "tqdm>=4.60",
-    "matplotlib>=3.5",
+    "matplotlib>=3.5.3",
 ]
 
 [project.optional-dependencies]
