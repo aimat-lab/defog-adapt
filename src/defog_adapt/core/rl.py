@@ -42,48 +42,6 @@ from .sampler import Sampler
 
 
 # ===========================================================================
-# Reward
-# ===========================================================================
-class Reward:
-    """Reward contract: ``__call__(X1, E1, node_mask) -> (K,)`` tensor, higher is
-    better. Mirrors the energy contract in :mod:`defog_adapt.core.energy` (which is
-    *lower*-is-better) so any ``MoleculePropertyEnergy`` composes via
-    :func:`reward_from_energy`. This base class is documentation; any callable with the
-    same signature works."""
-
-    def __call__(self, X1, E1, node_mask) -> torch.Tensor:  # pragma: no cover
-        raise NotImplementedError
-
-
-def reward_from_energy(energy_fn, *, transform: str = "neg", beta: float = 1.0,
-                       invalid_reward: float = -5.0, validity_bonus: float = 0.0):
-    """Wrap a DeFoG energy (lower = better; invalid graphs get a large energy) as a
-    bounded reward (higher = better).
-
-    ``transform``: ``"neg"`` -> ``-energy`` ; ``"negexp"`` -> ``exp(-beta*energy)``.
-    Undecodable / invalid graphs (energy >= ``0.9 * energy_fn.invalid``) are floored
-    to a finite ``invalid_reward`` -- applied *before* any advantage whitening so a
-    ``1e3`` invalid energy cannot wreck the batch mean/std. Valid graphs optionally
-    get ``+validity_bonus``.
-    """
-    invalid_energy = float(getattr(energy_fn, "invalid", 1e3))
-    thresh = 0.9 * invalid_energy
-
-    def _reward(X1, E1, node_mask):
-        e = energy_fn(X1, E1, node_mask).float().reshape(-1)
-        invalid = e >= thresh
-        if transform == "negexp":
-            r = torch.exp(-beta * e)
-        else:
-            r = -e
-        r = r + validity_bonus
-        r = torch.where(invalid, torch.full_like(r, float(invalid_reward)), r)
-        return r
-
-    return _reward
-
-
-# ===========================================================================
 # Eager policy gradient
 # ===========================================================================
 def eager_logprob(model, X_t, E_t, y_t, t, X1, E1, node_mask,
@@ -236,15 +194,9 @@ class RolloutSampler(Sampler):
     """
 
     def __init__(self, model, *, subsample_idx: Optional[Sequence[int]] = None,
-                 group_ids=None, crn: bool = False, record_trace: bool = True, **kwargs):
+                 group_ids=None, crn: bool = False, **kwargs):
         super().__init__(model, **kwargs)
         self.subsample_idx = set(subsample_idx) if subsample_idx is not None else None
-        # Trace recording is what the eager estimator needs and what the re-noising
-        # estimators (RAM/DAM) do not: they score at states drawn from p_{t|1}(.|G1),
-        # not at the states the trajectory happened to occupy. Turning it off keeps
-        # the endpoint stash and the CRN `_init_state` override, which both arms
-        # still need. Default True == today's behaviour.
-        self.record_trace = bool(record_trace)
         # Common random numbers: when `crn` and `group_ids` are given, every member of
         # an advantage group starts from the SAME initial noise + graph size (see
         # `_init_state`), so the group-relative advantage reflects the sampling
@@ -269,9 +221,6 @@ class RolloutSampler(Sampler):
         return super()._advance(t_int, X, E, y, node_mask, use_cfg)
 
     def _pre_step(self, X, E, t_norm, node_mask):
-        if not self.record_trace:
-            self._step += 1
-            return X, E
         if self.subsample_idx is None or self._step in self.subsample_idx:
             self.trace_X.append(X.detach())
             self.trace_E.append(E.detach())
@@ -323,29 +272,20 @@ class RolloutBuffer:
 # Shared trainer plumbing
 # ===========================================================================
 class RLTrainerBase:
-    """Optimiser / EMA / reference / loop plumbing shared by every RL fine-tuner here.
+    """Optimiser / EMA / reference / loop plumbing shared by the RL fine-tuners here.
 
-    Subclasses supply the two things that actually differ between estimators:
-    :meth:`rollout` (produce a buffer) and :meth:`update` (turn it into a gradient
-    step). Everything else -- the AdamW, the EMA, the frozen reference, the outer
-    loop, the adaptive-KL controller, the checkpoint writer -- is estimator-agnostic
-    and was moved here verbatim from :class:`GDPOTrainer`.
-
-    ``record_trace`` is a CLASS attribute, not a constructor argument, because it is a
-    property of the estimator rather than of a run: the eager estimator scores at
-    trajectory states and needs the trace; the re-noising estimators (RAM/DAM) score
-    at states drawn from ``p_{t|1}(.|G1)`` and must not pay for it. Subclasses flip it.
+    Subclasses supply the two things that differ: :meth:`rollout` (produce a buffer) and
+    :meth:`update` (turn it into a gradient step). Everything else -- the AdamW, the EMA,
+    the frozen reference, the outer loop and the checkpoint writer -- lives here and was
+    moved verbatim from :class:`GDPOTrainer`.
 
     Guarded by ``tests/test_rl_parity.py``, which compares this stack against a frozen
     pre-refactor copy in the same process and requires bit-identical metrics and
     weights.
     """
 
-    #: whether :class:`RolloutSampler` should stash the per-step noisy states
-    record_trace: bool = True
-
-    def __init__(self, model, *, lr: float = 1e-5, weight_decay: float = 1e-5,
-                 grad_clip: float = 1.0, ema_decay: Optional[float] = 0.999,
+    def __init__(self, model, *, lr: float = 2e-5, weight_decay: float = 1e-5,
+                 grad_clip: float = 1.0, ema_decay: Optional[float] = 0.9,
                  device=None, seed: int = 0):
         self.model = model
         self.grad_clip = grad_clip
@@ -354,10 +294,7 @@ class RLTrainerBase:
         self.opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         self.ema = EMA(model, ema_decay) if ema_decay else None
         self._iter = 0
-        # Estimators without a KL term leave these at their defaults, which makes the
-        # adaptive-KL controller in `step` inert rather than conditional.
         self.kl_coef = 0.0
-        self.kl_target = None
 
     # -------------------------------------------------------- to be implemented
     def rollout(self):
@@ -378,11 +315,6 @@ class RLTrainerBase:
         self._iter = getattr(self, "_iter", 0)
         buf = self.rollout()
         metrics = self.update(buf)
-
-        # adaptive KL controller: multiplicatively nudge kl_coef toward kl_target.
-        if self.kl_target is not None and self.kl_coef > 0:
-            err = metrics.get("kl", 0.0) / max(self.kl_target, 1e-8)
-            self.kl_coef = float(min(max(self.kl_coef * (1.0 + 0.1 * (err - 1.0)), 1e-4), 1e3))
 
         r = buf.reward
         metrics.update({
@@ -423,15 +355,20 @@ class RLTrainerBase:
 class GDPOTrainer(RLTrainerBase):
     """GDPO eager-policy-gradient fine-tuner for a pretrained ``DeFoGModel``.
 
-    Defaults reproduce faithful single-epoch eager REINFORCE (``kl_coef=0``,
-    no PPO surrogate). The fine-tuned weights live in ``model`` (updated in place);
-    :meth:`save` writes a plain DeFoG checkpoint that loads with ``DeFoGModel.load``
-    and samples with the ordinary ``Sampler`` -- no reward at generation time.
+    The defaults are the recipe behind the recorded unconditional results: 128 rollouts of
+    100 steps at eta 0, 12 noisy states per trajectory in the gradient, the joint (``"sum"``)
+    log-likelihood, a mean-baseline advantage, lr 2e-5, EMA 0.9, and a KL pull of 0.3 to the
+    frozen starting model. The fine-tuned weights live in ``model`` (updated in place);
+    :meth:`save` writes a plain DeFoG checkpoint that loads with ``DeFoGModel.load`` and
+    samples with the ordinary ``Sampler`` -- no reward at generation time.
+
+    The last iteration is not necessarily the best one: evaluate inside
+    ``fit(..., on_iter=...)`` and keep the best weights (see :meth:`save`).
 
     Args:
         model: the policy ``DeFoGModel``, fine-tuned IN PLACE.
-        reward_fn: ``(X1, E1, node_mask) -> (K,)``, higher = better. Use the raw
-            energy classes via :func:`reward_from_energy`, or any custom callable.
+        reward_fn: ``(X1, E1, node_mask) -> (K,)``, higher = better. Any callable of that
+            signature; the rewards in this module are examples.
         rollout_size: K trajectories per iteration.
         sample_steps / eta / omega / time_distortion: rollout (exploration) policy.
             ``eta`` is the CTMC stochasticity = exploration temperature.
@@ -453,9 +390,9 @@ class GDPOTrainer(RLTrainerBase):
         reward_fn: Callable,
         *,
         # rollout / exploration
-        rollout_size: int = 64,
+        rollout_size: int = 128,
         sample_steps: int = 100,
-        eta: float = 5.0,
+        eta: float = 0.0,
         omega: float = 0.0,
         time_distortion: str = "polydec",
         size_dist=None,
@@ -465,11 +402,11 @@ class GDPOTrainer(RLTrainerBase):
         # group so the group-relative baseline has lower variance (needs groups + eta>0).
         crn: bool = False,
         # eager gradient
-        subsample_steps: Optional[int] = 16,
+        subsample_steps: Optional[int] = 12,
         subsample: str = "stratified",
         minibatch_size: Optional[int] = 16,
         lambda_edge: float = 1.0,
-        reduction: str = "mean",
+        reduction: str = "sum",
         # advantage. Default "mean" (Dr. GRPO): a mean baseline WITHOUT the per-group
         # std-normalization, which otherwise amplifies medium-variance groups and
         # biases learning toward mid-difficulty targets. "grpo" restores the std-
@@ -477,21 +414,14 @@ class GDPOTrainer(RLTrainerBase):
         advantage_mode: str = "mean",
         advantage_clip: Optional[float] = 5.0,
         advantage_eps: float = 1e-4,
-        # positive-only / RAFT: clamp the advantage to >=0 so the loss NEVER pushes
-        # down low-reward endpoints (no unlikelihood term -> no atom-soup collapse).
-        # For a binary reward this is exactly reward-ranked filtered fine-tuning; it
-        # also makes the gradient fade as the reward saturates. Optional, off by default.
-        positive_only: bool = False,
         # KL to reference
-        kl_coef: float = 0.0,
+        kl_coef: float = 0.3,
         ref_model=None,
-        # adaptive KL: if set, nudge kl_coef each step toward this target KL. Optional.
-        kl_target: Optional[float] = None,
         # optim
-        lr: float = 1e-5,
+        lr: float = 2e-5,
         weight_decay: float = 1e-5,
         grad_clip: float = 1.0,
-        ema_decay: Optional[float] = 0.999,
+        ema_decay: Optional[float] = 0.9,
         device=None,
         seed: int = 0,
     ):
@@ -515,9 +445,7 @@ class GDPOTrainer(RLTrainerBase):
         self.advantage_mode = advantage_mode
         self.advantage_clip = advantage_clip
         self.advantage_eps = advantage_eps
-        self.positive_only = bool(positive_only)
         self.kl_coef = float(kl_coef)
-        self.kl_target = kl_target
         # Reference for the KL term. Built from hyperparameters + weight copy (NOT
         # copy.deepcopy -- avoids duplicating a live LightningModule). Only when KL
         # is on. The reference is a fixed frozen copy of the pretrained weights.
@@ -535,13 +463,6 @@ class GDPOTrainer(RLTrainerBase):
         g = torch.Generator().manual_seed(self.seed + self._iter)
         if self.subsample == "uniform":
             idx = torch.randperm(S, generator=g)[:m]
-        elif self.subsample == "early":
-            # Mirror of "late": bias toward t->0. Added for the DAM diagnostic, where
-            # the question is whether the adjoint has signal in the region the
-            # ENDPOINT IS STILL UNDETERMINED -- which is the low-t end, and which only
-            # a real sub-rollout can score (a one-shot head draw there is garbage).
-            w = torch.linspace(1.0, 0.2, S) ** 2
-            idx = torch.multinomial(w, m, replacement=False, generator=g)
         elif self.subsample == "late":
             # bias toward t->1, where the clean prediction most directly carries G1
             w = torch.linspace(0.2, 1.0, S) ** 2
@@ -566,7 +487,7 @@ class GDPOTrainer(RLTrainerBase):
         sampler = RolloutSampler(
             self.model, subsample_idx=idx, eta=self.eta, omega=self.omega,
             sample_steps=self.sample_steps, time_distortion=self.time_distortion,
-            group_ids=groups, crn=self.crn, record_trace=self.record_trace,
+            group_ids=groups, crn=self.crn,
             # CFG is a sampling heuristic, not a differentiable policy: force it off
             # so the behavior policy matches the plain-conditional gradient recompute
             # (else conditional rollouts are CFG-tilted but the gradient is not).
@@ -601,10 +522,7 @@ class GDPOTrainer(RLTrainerBase):
         # policy gradient biased (behavior != scored != deployed policy).
         model.eval()
 
-        # positive-only / RAFT: drop the negative-advantage (unlikelihood) half of
-        # the gradient, so we only ever push UP good endpoints, never push mass into
-        # invalid space. No-op when off.
-        A = buf.advantage.clamp_min(0.0) if self.positive_only else buf.advantage
+        A = buf.advantage
         K = A.shape[0]
         n_states = max(1, len(buf.states))
         mb = self.minibatch_size or K
@@ -744,12 +662,26 @@ class AdapterGDPOTrainer(GDPOTrainer):
 
     ``condition_sampler() -> (cond (K, cond_dim) RAW targets, groups (K,))`` is required
     (pass it via the usual GDPOTrainer kwarg).
+
+    ``rollout_weight`` is required and has no default, on purpose. It is the CFG weight the
+    rollouts are generated AND scored at, so it must be the weight the adapter will be sampled
+    at. Training at w=1 and deploying at w=1.5 or 2 optimises a policy nobody uses; every
+    recorded run before this was fixed was caught out by exactly that omission.
+
+    The defaults are the recipe behind the recorded adapter results: head reward, lr 1e-4,
+    EMA 0.9, a KL pull of 0.05 to the pre-RL adapter, and rollouts of 250 steps at eta 1.0
+    with 16 noisy states per trajectory and the per-element-mean (``"mean"``) log-likelihood.
     """
 
-    def __init__(self, base, adapter, cond_reward, *, ref_adapter=None, kl_coef: float = 0.0,
-                 kl_target=None, rollout_weight: float = 1.0, rollout_mode: str = "product",
-                 crn: bool = True,
-                 lr: float = 1e-5, weight_decay: float = 1e-5, ema_decay=0.999, **gdpo_kw):
+    def __init__(self, base, adapter, cond_reward, *, rollout_weight: float, ref_adapter=None,
+                 kl_coef: float = 0.05, rollout_mode: str = "product", crn: bool = True,
+                 lr: float = 1e-4, weight_decay: float = 1e-5,
+                 ema_decay: Optional[float] = 0.9, **gdpo_kw):
+        # The adapter recipe explores differently from the base-model one (longer rollouts at
+        # a small eta, more states per trajectory, a size-invariant reduction).
+        for key, value in (("rollout_size", 128), ("sample_steps", 250), ("eta", 1.0),
+                           ("subsample_steps", 16), ("reduction", "mean")):
+            gdpo_kw.setdefault(key, value)
         # Bring up GDPO plumbing with model=base but suppress its base-ref/opt/ema
         # (kl_coef=0, ema_decay=None); we build adapter-scoped versions below.
         super().__init__(base, reward_fn=None, kl_coef=0.0, ema_decay=None,
@@ -758,7 +690,6 @@ class AdapterGDPOTrainer(GDPOTrainer):
         self.adapter = adapter
         self.cond_reward = cond_reward
         self.kl_coef = float(kl_coef)
-        self.kl_target = kl_target
         # CFG weight/mode of the single adapter branch: the ONE source of truth for
         # BOTH the rollout composition and the eager-gradient recompute, so behavior
         # and scored policy can never diverge (GDPO requires them identical). weight=1
@@ -789,19 +720,17 @@ class AdapterGDPOTrainer(GDPOTrainer):
                                   base=self.base, mode=self.rollout_mode)
         sampler = RolloutSampler(self.base, subsample_idx=idx, eta=self.eta, omega=self.omega,
                                  sample_steps=self.sample_steps, time_distortion=self.time_distortion,
-                                 group_ids=groups, crn=self.crn,
-                                 record_trace=self.record_trace, guidance_scale=1.0)
+                                 group_ids=groups, crn=self.crn, guidance_scale=1.0)
         sampler.composition = comp
         # `condition` MUST reach the size distribution. A condition-aware
-        # SizeDistribution (a concept-conditioned one) recovers its
-        # target from `condition.argmin(-1)` and silently falls back to the base's
-        # marginal when it is absent -- so omitting it does not raise, it just draws
-        # every rollout graph from the wrong distribution. Measured on the AqSolDB
-        # concepts: rollouts averaged 22.5 heavy atoms against 18.1 at evaluation,
-        # i.e. RL trained on a +4.5-atom surplus that deployment does not have, and
-        # that surplus is exactly what produces macrocycles and disconnected
-        # fragments. Callers using a size distribution that ignores `condition`
-        # (e.g. CategoricalSizeDistribution) are unaffected.
+        # SizeDistribution recovers its target from `condition` and silently falls back to
+        # the base's marginal when it is absent -- so omitting it does not raise, it just
+        # draws every rollout graph from the wrong distribution. Measured in the research
+        # log on one concept-conditioned dataset: rollouts averaged 22.5 heavy atoms against
+        # 18.1 at evaluation, i.e. RL trained on a +4.5-atom surplus that deployment does
+        # not have, and that surplus is exactly what produces macrocycles and disconnected
+        # fragments. Callers using a size distribution that ignores `condition` (e.g.
+        # EmpiricalSizeDistribution) are unaffected.
         sampler.sample(self.rollout_size, num_nodes=self.num_nodes, size_dist=self.size_dist,
                        condition=cond, device=self.device, show_progress=False)
         X1, E1 = sampler.endpoint
@@ -815,7 +744,7 @@ class AdapterGDPOTrainer(GDPOTrainer):
     def update(self, buf: RolloutBuffer) -> dict:
         was_training = self.adapter.training
         self.adapter.eval()
-        A = buf.advantage.clamp_min(0.0) if self.positive_only else buf.advantage
+        A = buf.advantage
         K = A.shape[0]
         n_states = max(1, len(buf.states))
         mb = self.minibatch_size or K
@@ -867,10 +796,9 @@ class AdapterGDPOTrainer(GDPOTrainer):
 # ===========================================================================
 # Conditional property rewards
 # ===========================================================================
-# Promoted verbatim from experiments/adapter_rl_finetune__zinc.py, where they were the
-# reward used to produce the shipped first-party adapters. They live here because they are
-# training-loop code, and because a downstream refinement step needs them from the library
-# rather than from an experiment script.
+# Promoted verbatim from experiments/adapter_rl_finetune__zinc.py of the research package,
+# where they were the reward used to produce the recorded adapter results. They live here
+# because they are training-loop code.
 #
 # The CONNECTIVITY-FIRST tiering is the load-bearing part and must not be "simplified":
 #
@@ -935,12 +863,6 @@ class WeightedSanityPropertyReward:
     targeting". Here both terms are normalised to [0, 1] and then weighted, so a
     well-targeted molecule with one oversized ring CAN outrank a sane but off-target
     one -- at the default 3:1 that is exactly the trade being asked for.
-
-    The [0, 1] range is also what makes this the reward of choice for estimators that
-    map the raw score onto a bounded weight. DiffusionNFT's ``0.5 + 0.5*clip((raw-mu)/Z,
-    -1, 1)`` saturates whenever the raw spread is dominated by tier gaps, which is
-    exactly what :class:`PropertyMatchReward`'s -10/-4/[-3,0] tiering produces; a
-    continuous [0, 4] score does not have that problem.
 
     ``sanity`` is the project's own definition, not a proxy: valid AND connected AND
     every ring size within [3, 8] (:func:`defog_adapt.domains.molecule.ring_sizes_ok`), so
@@ -1045,9 +967,10 @@ class HeadPropertyMatchReward:
 
     Same tiering and scale as :class:`PropertyMatchReward`, with the property term supplied by
     the head instead of a closed form. This is the only option for a property that cannot be
-    computed — and the reason a downstream refinement step fits a second, independent head to
-    report results with: optimising a policy against a learned reward drives it toward that
-    reward's errors, so the same head cannot both define the objective and score it.
+    computed — and the reason results should be reported with a second, independent head
+    (see :func:`~defog_adapt.core.property_head.fit_property_head`): optimising a policy
+    against a learned reward drives it toward that reward's errors, so the same head cannot
+    both define the objective and score it.
     """
 
     def __init__(self, head, atom_encoder, bond_encoder, atom_decoder, bond_decoder, device,

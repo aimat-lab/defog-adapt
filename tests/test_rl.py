@@ -30,7 +30,6 @@ from defog_adapt.core import (
     eager_logprob,
     kl_clean,
     group_advantage,
-    reward_from_energy,
     EMA,
 )
 from defog_adapt.core.data import _edge_upper_mask
@@ -316,42 +315,29 @@ def test_repeated_updates_raise_objective_on_frozen_rollout(small_model):
     assert after > before, f"objective did not rise: {before:.3f} -> {after:.3f}"
 
 
-# ======================================================================
-# reward_from_energy adapter
-# ======================================================================
-def test_optional_features_default_to_noop(small_model):
-    # all new features off by default -> behavior identical to before
-    t = GDPOTrainer(small_model, edge_count_reward, kl_coef=0.0, ema_decay=None)
-    assert t.positive_only is False
-    assert t.kl_target is None
-    assert t.advantage_mode == "mean"   # Dr. GRPO is the default
 
 
-def test_positive_only_clamps_and_still_learns(small_model):
-    torch.manual_seed(20)
-    model = small_model
-    trainer = GDPOTrainer(
-        model, edge_count_reward, rollout_size=32, sample_steps=5,
-        subsample_steps=None, eta=0.0, time_distortion="identity",
-        advantage_mode="grpo", positive_only=True, kl_coef=0.0,
-        lr=3e-3, ema_decay=None, seed=20,
-    )
-    buf = trainer.rollout()
-    # GRPO produces negatives; positive-only must clamp them out of the loss
-    assert (buf.advantage < 0).any()
-    assert (buf.advantage.clamp_min(0.0) >= 0).all()
+def test_defaults_are_the_recorded_recipe(small_model):
+    """A bare ``GDPOTrainer(model, reward)`` trains the recipe behind the recorded
+    unconditional results, not a plain REINFORCE. Pinned so a drive-by edit cannot silently
+    change what a call that leaves everything default does."""
+    t = GDPOTrainer(small_model, edge_count_reward)
+    assert (t.rollout_size, t.sample_steps, t.eta) == (128, 100, 0.0)
+    assert (t.subsample_steps, t.minibatch_size, t.reduction) == (12, 16, "sum")
+    assert t.advantage_mode == "mean"                 # Dr. GRPO
+    assert t.kl_coef == 0.3 and t.ref is not None
+    assert t.opt.param_groups[0]["lr"] == 2e-5
+    assert t.ema is not None and t.ema.decay == 0.9
 
-    @torch.no_grad()
-    def eval_reward():
-        s = RolloutSampler(model, sample_steps=5)
-        s.sample(64, device=torch.device("cpu"), show_progress=False)
-        return float(edge_count_reward(s.endpoint[0], s.endpoint[1], s.end_node_mask).mean())
 
-    before = eval_reward()
-    trainer.fit(30)
-    after = eval_reward()
-    # positive-only still increases the toy reward (only pushes good endpoints up)
-    assert after > before, f"positive-only did not learn: {before:.2f} -> {after:.2f}"
+def test_rollout_sampler_records_every_step_it_is_asked_to(small_model):
+    """The eager estimator scores at the states the trajectory visited, so a rollout has to
+    keep them. (With no subsample every step is kept.)"""
+    torch.manual_seed(7)
+    s = RolloutSampler(small_model, sample_steps=5, eta=1.0, group_ids=[0, 0, 1, 1], crn=True)
+    s.sample(4, device=torch.device("cpu"), show_progress=False)
+    assert len(s.trace_X) == len(s.trace_E) == len(s.trace_t) == 5
+    assert s.endpoint is not None and s.end_node_mask is not None
 
 
 def test_kl_reference_is_frozen(small_model):
@@ -366,29 +352,6 @@ def test_kl_reference_is_frozen(small_model):
     # the KL reference is a fixed frozen copy of the pretrained weights; never updates
     assert all(torch.equal(ref0[k], ref1[k]) for k in ref0)
     assert all(not p.requires_grad for p in fix.ref.parameters())
-
-
-def test_adaptive_kl_moves_coef(small_model):
-    torch.manual_seed(23)
-    model = small_model
-    t = GDPOTrainer(model, edge_count_reward, rollout_size=16, sample_steps=5,
-                    subsample_steps=None, eta=0.0, time_distortion="identity",
-                    kl_coef=0.5, kl_target=0.01, lr=3e-3, ema_decay=None, seed=23)
-    t.fit(5)
-    # the controller nudges kl_coef away from its initial value toward the target
-    assert abs(t.kl_coef - 0.5) > 1e-4
-
-
-def test_reward_from_energy_floors_invalid():
-    class FakeEnergy:
-        invalid = 1e3
-        def __call__(self, X1, E1, node_mask):
-            # graph 0 valid (energy 0.5), graph 1 invalid (energy 1e3)
-            return torch.tensor([0.5, 1e3])
-    r = reward_from_energy(FakeEnergy(), transform="neg", invalid_reward=-5.0)
-    out = r(None, None, torch.ones(2, 3, dtype=torch.bool))
-    assert abs(float(out[0]) - (-0.5)) < 1e-6
-    assert abs(float(out[1]) - (-5.0)) < 1e-6
 
 
 # ======================================================================
@@ -504,6 +467,29 @@ def test_adapter_scoring_grad_only_to_adapter(small_model):
     assert any(p.grad is not None and float(p.grad.abs().sum()) > 0 for p in adapter.parameters())
 
 
+def test_adapter_trainer_requires_the_rollout_weight(small_model):
+    """No default, on purpose: rollouts are generated AND scored at this CFG weight, so it
+    has to be the weight the adapter is sampled at. A default of 1.0 meant every early run
+    trained a policy nobody deployed."""
+    from defog_adapt.core.rl import AdapterGDPOTrainer
+    adapter = _make_adapter(small_model)
+    with pytest.raises(TypeError, match="rollout_weight"):
+        AdapterGDPOTrainer(small_model, adapter, lambda *a: None,
+                           condition_sampler=lambda: None)
+
+
+def test_adapter_trainer_defaults_are_the_recorded_recipe(small_model):
+    from defog_adapt.core.rl import AdapterGDPOTrainer
+    adapter = _make_adapter(small_model)
+    t = AdapterGDPOTrainer(small_model, adapter, lambda *a: None, rollout_weight=1.5,
+                           condition_sampler=lambda: None)
+    assert (t.rollout_size, t.sample_steps, t.eta) == (128, 250, 1.0)
+    assert (t.subsample_steps, t.reduction) == (16, "mean")
+    assert t.kl_coef == 0.05 and t.opt.param_groups[0]["lr"] == 1e-4
+    assert t.ema is not None and t.ema.decay == 0.9
+    assert t.crn is True and t.rollout_weight == 1.5 and t.rollout_mode == "product"
+
+
 def test_adapter_trainer_step_at_weight2_updates_adapter(small_model):
     # End-to-end: rollout + update at rollout_weight=2 with KL on runs and moves the
     # adapter (base frozen). Exercises the shared weight/mode source-of-truth path.
@@ -582,47 +568,3 @@ def test_crn_rollout_first_recorded_state_shared_within_group(small_model):
         r = int(idx[0])
         for j in idx.tolist():
             assert torch.equal(x0[j], x0[r])
-
-
-# ======================================================================
-# record_trace: the re-noising estimators' escape hatch
-# ======================================================================
-def test_record_trace_false_suppresses_trace_but_keeps_endpoint_and_crn(small_model):
-    """RAM/DAM score at states drawn from p_{t|1}(.|G1), not at trajectory states, so
-    they must be able to switch trace recording off -- while still getting the
-    endpoint stash and the CRN shared start.
-
-    An explicit flag rather than ``subsample_steps=0``: that route returns ``[]`` for
-    ``subsample='stratified'`` and ``'uniform'`` but RAISES for ``'late'``, and it is
-    unreachable from a subclass that overrides only ``update()`` because the inherited
-    ``rollout`` builds the sampler from ``self._choose_subsample()``.
-    """
-    from defog_adapt.core.rl import RolloutSampler
-    torch.manual_seed(7)
-    gids = [0, 0, 1, 1]
-
-    off = RolloutSampler(small_model, sample_steps=5, eta=1.0,
-                         group_ids=gids, crn=True, record_trace=False)
-    off.sample(4, device=torch.device("cpu"), show_progress=False)
-
-    assert off.trace_X == [] and off.trace_E == [] and off.trace_t == [], \
-        "record_trace=False still recorded noisy states"
-    assert off.endpoint is not None and off.end_node_mask is not None, \
-        "record_trace=False lost the endpoint stash"
-    nm = off.end_node_mask
-    assert torch.equal(nm[0], nm[1]) and torch.equal(nm[2], nm[3]), \
-        "record_trace=False broke the CRN shared start (group members differ in size)"
-
-    torch.manual_seed(7)
-    on = RolloutSampler(small_model, sample_steps=5, eta=1.0,
-                        group_ids=gids, crn=True)          # default: records
-    on.sample(4, device=torch.device("cpu"), show_progress=False)
-    assert len(on.trace_X) == 5, "default record_trace no longer records every step"
-
-
-def test_record_trace_default_leaves_rollout_unchanged(small_model):
-    """The flag defaults to today's behaviour, so no existing caller changes."""
-    from defog_adapt.core.rl import RolloutSampler
-    import inspect
-    sig = inspect.signature(RolloutSampler.__init__)
-    assert sig.parameters["record_trace"].default is True

@@ -91,18 +91,20 @@ def _assert_identical_history(h1, h2, what):
 
 
 # ------------------------------------------------------------------ GDPO
-# (kl on/off, ema on/off, positive_only, adaptive kl, crn -- all exercised)
+# (kl on/off, ema on/off, crn -- all exercised). `reduction` is pinned explicitly: the live
+# trainers default to the recorded recipe's value and the frozen copy to the old one, so a
+# config that left it out would compare two different settings.
 GDPO_CONFIGS = [
     pytest.param(
         dict(rollout_size=8, sample_steps=5, subsample_steps=2, minibatch_size=4,
              eta=0.0, time_distortion="identity", advantage_mode="grpo",
-             kl_coef=0.0, lr=1e-3, ema_decay=None),
+             reduction="mean", kl_coef=0.0, lr=1e-3, ema_decay=None),
         id="minimal",
     ),
     pytest.param(
         dict(rollout_size=8, sample_steps=5, subsample_steps=2, minibatch_size=4,
              eta=1.0, time_distortion="polydec", advantage_mode="mean",
-             positive_only=True, kl_coef=0.3, kl_target=0.05, lr=1e-3,
+             reduction="mean", kl_coef=0.3, lr=1e-3,
              ema_decay=0.99, subsample="late"),
         id="everything-on",
     ),
@@ -146,7 +148,7 @@ ADAPTER_CONFIGS = [
         id="w1-nokl",
     ),
     pytest.param(
-        dict(rollout_weight=2.0, kl_coef=0.1, kl_target=0.02, rollout_size=8,
+        dict(rollout_weight=2.0, kl_coef=0.1, rollout_size=8,
              sample_steps=5, subsample_steps=2, minibatch_size=4, eta=1.0,
              time_distortion="polydec", lr=1e-2, ema_decay=0.99, crn=True),
         id="w2-kl-crn",
