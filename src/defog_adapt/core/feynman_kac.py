@@ -22,7 +22,6 @@ at each resample checkpoint (to predict the clean graph for the reward), + rewar
 evaluation (e.g. RDKit decode) on ``K`` graphs per checkpoint.
 """
 
-import math
 from typing import Callable, Optional
 
 import torch
@@ -31,55 +30,6 @@ from tqdm import tqdm
 
 from .data import PlaceHolder, dense_to_pyg
 from .sampler import Sampler
-
-
-def make_beta_schedule(spec):
-    """``spec`` -> ``beta(u)`` for ``u`` in [0, 1], the fraction through the FK window.
-
-    ``u = 0`` is the FIRST checkpoint and ``u = 1`` the LAST, so a schedule spans exactly
-    the region where Feynman-Kac is active. Measuring it against total sampling steps
-    instead would mean a "2 to 20" ramp actually ran from 12.8 to 20 under the default
-    warmup of 0.6, and the stated endpoints would be fiction.
-
-    A bare number is a constant schedule, so everything written before schedules existed
-    keeps working and keeps meaning what it meant.
-
-    Accepted forms::
-
-        20.0                                        constant
-        {"kind": "constant", "value": 20}
-        {"kind": "linear",      "start": 2, "end": 20}
-        {"kind": "cosine",      "start": 2, "end": 20}    smooth ease in and out
-        {"kind": "exponential", "start": 2, "end": 20}    geometric, both > 0
-
-    A dict rather than a callable on purpose: a function cannot be serialised into a
-    package or printed in a table caption, so a run configured with one could not be
-    reproduced from its own metadata.
-    """
-    if spec is None:
-        raise ValueError("beta schedule is None")
-    if isinstance(spec, (int, float)):
-        b = float(spec)
-        return lambda u: b
-    if not isinstance(spec, dict):
-        raise TypeError(f"beta must be a number or a spec dict, got {type(spec).__name__}")
-    kind = spec.get("kind", "constant")
-    if kind == "constant":
-        b = float(spec.get("value", spec.get("start", 0.0)))
-        return lambda u: b
-    if kind not in ("linear", "cosine", "exponential"):
-        raise ValueError(f"unknown beta schedule kind {kind!r}; have 'constant', "
-                         f"'linear', 'cosine', 'exponential'")
-    if "start" not in spec or "end" not in spec:
-        raise ValueError(f"{kind!r} beta schedule needs 'start' and 'end'; got {sorted(spec)}")
-    a, b = float(spec["start"]), float(spec["end"])
-    if kind == "linear":
-        return lambda u: a + (b - a) * u
-    if kind == "cosine":
-        return lambda u: a + (b - a) * (1.0 - math.cos(math.pi * min(max(u, 0.0), 1.0))) / 2.0
-    if a <= 0.0 or b <= 0.0:
-        raise ValueError(f"exponential beta schedule needs start and end > 0; got {a}, {b}")
-    return lambda u: a * (b / a) ** min(max(u, 0.0), 1.0)
 
 
 def _resample_indices(w: torch.Tensor, K: int, scheme: str) -> torch.Tensor:
@@ -129,15 +79,6 @@ def _resample_indices(w: torch.Tensor, K: int, scheme: str) -> torch.Tensor:
                      f"have 'multinomial', 'systematic', 'residual'")
 
 
-#: Diagnostic sink. Set to a list to collect one record per FK checkpoint --
-#: effective sample size, whether a resample fired, and the spread of the log-weights.
-#: None (the default) costs nothing and changes nothing. It is a module global rather
-#: than a constructor argument on purpose: the sampler is built deep inside a downstream pipeline's
-#: sample(), and threading a debug channel through that API would mean changing the
-#: production signature to answer a one-off question.
-FK_TRACE = None
-
-
 @torch.no_grad()
 def predict_clean(model, X_t, E_t, y_t, t, node_mask):
     """MAP prediction of the clean graph from the current noisy state: run the
@@ -181,8 +122,7 @@ class FeynmanKacSampler(Sampler):
     def __init__(self, model, energy_fn: Callable, *, beta=1.0,
                  resample_interval: Optional[int] = None, warmup_frac: float = 0.7,
                  ess_frac: Optional[float] = None,
-                 resample_scheme: str = "residual", constraint=None,
-                 n_free: Optional[int] = None, composition=None, **kwargs):
+                 resample_scheme: str = "residual", composition=None, **kwargs):
         super().__init__(model, **kwargs)
         self.energy_fn = energy_fn
         # Optional AdapterComposition as the PROPOSAL: the frozen-base dynamics are
@@ -192,50 +132,24 @@ class FeynmanKacSampler(Sampler):
         # (target-aware), so "FK refinement over adapter conditioning" works end-to-end.
         if composition is not None:
             self.composition = composition
-        # `beta` may be a number or a schedule spec (see make_beta_schedule). `self.beta`
-        # stays a plain float -- the value at the LAST checkpoint -- because several places
-        # read it as a scalar for reporting; `self.beta_fn` is what the loop actually uses.
-        self.beta_spec = beta
-        self.beta_fn = make_beta_schedule(beta)
-        self.beta = float(self.beta_fn(1.0))
+        self.beta = float(beta)
         self.resample_interval = resample_interval
         self.warmup_frac = warmup_frac
         self.ess_frac = ess_frac
-        # Default stays multinomial so every number recorded before this existed is
-        # reproducible; systematic is the better choice for new work.
         if resample_scheme not in ("multinomial", "systematic", "residual"):
             raise ValueError(f"unknown resample_scheme {resample_scheme!r}")
-        # Default is `residual` from 2026-09-01. All three schemes are unbiased and the
-        # measured differences were inside the noise floor on both properties, so this is a
-        # choice on theoretical grounds -- lower offspring-count variance is never worse in
-        # expectation -- NOT an empirical result. It does mean a run recorded before that
-        # date only reproduces if the scheme is pinned to "multinomial", which is why the
-        # scheme is written into every result file rather than left implicit.
+        # The default is `residual`. All three schemes are unbiased and the measured
+        # differences were inside the noise floor on both properties, so this is a choice on
+        # theoretical grounds -- lower offspring-count variance is never worse in expectation
+        # -- NOT an empirical result. The earliest recorded results used "multinomial"; pin
+        # that scheme to reproduce them, and write the scheme into any result you keep.
         self.resample_scheme = resample_scheme
-        # Optional inpainting: freeze a Constraint's core and grow ``n_free`` new
-        # nodes around it while FK-steering the whole molecule. The core is
-        # re-projected before every step and installed exactly at the end; the FK
-        # reward is evaluated on the whole (core + grown) molecule.
-        self.constraint = constraint
-        self.n_free = n_free
 
     def _desc(self) -> str:
         tag = ""
         if getattr(self, "composition", None) is not None and len(self.composition) > 0:
             tag += "+adapter"
-        return "FK-SMC" + tag + ("+inpaint" if self.constraint is not None else "")
-
-    # inpainting hooks (no-ops when no constraint): project the frozen core each
-    # step (at the current noise level) and install the exact core at the end.
-    def _pre_step(self, X, E, t_norm, node_mask):
-        if self.constraint is not None:
-            return self.constraint.project(X, E, t_norm, node_mask, self.model.limit_dist)
-        return X, E
-
-    def _post_loop(self, X, E, node_mask):
-        if self.constraint is not None:
-            return self.constraint.project(X, E, 1.0, node_mask, self.model.limit_dist)
-        return X, E
+        return "FK-SMC" + tag
 
     @torch.no_grad()
     def _predict_clean(self, X, E, y, t_norm, node_mask):
@@ -265,10 +179,10 @@ class FeynmanKacSampler(Sampler):
         return ph.X, ph.E
 
     @torch.no_grad()
-    def _potential(self, X, E, y, t_norm, node_mask, beta=None):
+    def _potential(self, X, E, y, t_norm, node_mask):
         X1, E1 = self._predict_clean(X, E, y, t_norm, node_mask)
         energy = self.energy_fn(X1, E1, node_mask).to(X.device).reshape(-1)
-        return -(self.beta if beta is None else float(beta)) * energy
+        return -self.beta * energy
 
     @torch.no_grad()
     def sample(self, num_samples, num_nodes=None, size_dist=None, condition=None,
@@ -291,15 +205,6 @@ class FeynmanKacSampler(Sampler):
                 f"be plain sampling. Raise ess_frac above {1.0 / num_samples:.3g}, or raise K."
             )
 
-        # inpainting fixes the graph size to core_size + n_free (overrides size_dist)
-        if self.constraint is not None:
-            total = self.constraint.k + int(self.n_free)
-            if total > model.max_nodes:
-                raise ValueError(f"core k={self.constraint.k} + n_free={self.n_free} = "
-                                 f"{total} exceeds max_nodes={model.max_nodes}")
-            num_nodes = torch.full((num_samples,), total, dtype=torch.long)
-            size_dist = None
-
         node_mask, n_nodes, X, E, y, y_raw, use_cfg = model._prepare_generation(
             num_samples, num_nodes, size_dist, condition, self.guidance_scale, device
         )
@@ -308,15 +213,6 @@ class FeynmanKacSampler(Sampler):
         prev_phi = None
         ri = self.resample_interval or max(1, self.sample_steps // 8)
         warmup = int(self.warmup_frac * self.sample_steps)
-        # The checkpoints are enumerated BEFORE the loop because a beta schedule is defined
-        # over the FK window -- 0 at the first checkpoint, 1 at the last -- and that cannot
-        # be known incrementally. It also makes the count visible: at 500 steps with
-        # warmup 0.6 and the default interval there are only FOUR, which is too few for a
-        # ramp to express itself.
-        checkpoints = [t for t in range(self.sample_steps)
-                       if t >= warmup and (t - warmup) % ri == 0 and t < self.sample_steps - 1]
-        ck_index = {t: i for i, t in enumerate(checkpoints)}
-        n_ck = max(len(checkpoints) - 1, 1)
 
         iterator = range(self.sample_steps)
         if show_progress:
@@ -337,8 +233,7 @@ class FeynmanKacSampler(Sampler):
                 continue
 
             t_norm = ((t_int + 1) / self.sample_steps) * torch.ones(K, 1, device=device)
-            beta_now = float(self.beta_fn(ck_index.get(t_int, n_ck) / n_ck))
-            phi = self._potential(X, E, y, t_norm, node_mask, beta=beta_now)
+            phi = self._potential(X, E, y, t_norm, node_mask)
             # incremental weight (telescoping): reward *gained* since last checkpoint
             logw = logw + (phi if prev_phi is None else phi - prev_phi)
             prev_phi = phi
@@ -346,31 +241,6 @@ class FeynmanKacSampler(Sampler):
             w = torch.softmax(logw, dim=0)
             ess = 1.0 / w.pow(2).sum().clamp_min(1e-12)
             will_resample = (self.ess_frac is None) or (ess < self.ess_frac * K)
-            if FK_TRACE is not None:
-                # The spread over VALID particles only is what measures steering pressure.
-                # The full spread is dominated by the valid/invalid gap, which is a flag
-                # and not a measurement -- reading it as steering strength is precisely the
-                # mistake the QED diagnosis made.
-                inv = getattr(self.energy_fn, "invalid_value", None)
-                if inv is None:
-                    valid_spread = float(logw.max() - logw.min())
-                    n_invalid = -1
-                else:
-                    ok = (phi > -beta_now * float(inv) * 0.5)
-                    n_invalid = int((~ok).sum())
-                    valid_spread = (float(logw[ok].max() - logw[ok].min())
-                                    if int(ok.sum()) > 1 else 0.0)
-                FK_TRACE.append({
-                    "valid_logw_spread": valid_spread, "n_invalid": n_invalid,
-                    "t_int": int(t_int), "steps": int(self.sample_steps),
-                    "K": int(K), "ess": float(ess),
-                    "ess_frac_of_K": float(ess) / max(K, 1),
-                    "resampled": bool(will_resample),
-                    "logw_min": float(logw.min()), "logw_max": float(logw.max()),
-                    "logw_spread": float(logw.max() - logw.min()),
-                    "phi_min": float(phi.min()), "phi_max": float(phi.max()),
-                    "beta": beta_now,
-                })
             if will_resample:
                 idx = _resample_indices(w, K, self.resample_scheme)
                 X, E, node_mask, y = X[idx], E[idx], node_mask[idx], y[idx]
@@ -380,9 +250,6 @@ class FeynmanKacSampler(Sampler):
                 logw = torch.zeros(K, device=device)
                 if on_step is not None:
                     on_step(t_int + 1, self.sample_steps, "fk_resample")
-
-        # install the exact core (inpainting) after the loop; no-op otherwise
-        X, E = self._post_loop(X, E, node_mask)
 
         X, E, _ = model.limit_dist.ignore_virtual_classes(X, E)
         n_final = node_mask.sum(-1)
