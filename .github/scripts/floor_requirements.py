@@ -12,8 +12,12 @@ Lower bounds (``>=X``) become ``==X``. Anything without a lower bound is printed
 """
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib                      # Python 3.11+
+except ModuleNotFoundError:             # Python 3.10: the backport (`pip install tomli`)
+    import tomli as tomllib
 
 DEFAULT_GROUPS = ("core", "chem", "data")
 

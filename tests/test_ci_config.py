@@ -8,11 +8,15 @@ token exists anywhere, and a manual run can only reach the test index.
 
 import importlib.util
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
+
+try:
+    import tomllib                      # Python 3.11+
+except ModuleNotFoundError:             # Python 3.10: pytest itself depends on the backport
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
