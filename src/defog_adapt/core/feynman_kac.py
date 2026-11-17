@@ -144,6 +144,14 @@ class FeynmanKacSampler(Sampler):
         # -- NOT an empirical result. The earliest recorded results used "multinomial"; pin
         # that scheme to reproduce them, and write the scheme into any result you keep.
         self.resample_scheme = resample_scheme
+        #: One record per resample checkpoint of the LAST ``sample`` call (empty before the first):
+        #: ``step``, ``ess_over_k`` (effective sample size as a fraction of the particles),
+        #: ``logw_range`` (spread of the accumulated log-weights: the steering pressure) and
+        #: ``resampled``. A run that never resamples is the unguided sampler with extra forward
+        #: passes, and no error metric reveals it, so read this before concluding that Feynman-Kac
+        #: "did not help": a ``beta`` that is too small shows up as ``ess_over_k`` near 1 and a
+        #: ``logw_range`` near 0 at every checkpoint.
+        self.trace = []
 
     def _desc(self) -> str:
         tag = ""
@@ -211,6 +219,7 @@ class FeynmanKacSampler(Sampler):
         K = num_samples
         logw = torch.zeros(K, device=device)
         prev_phi = None
+        self.trace = []
         ri = self.resample_interval or max(1, self.sample_steps // 8)
         warmup = int(self.warmup_frac * self.sample_steps)
 
@@ -241,6 +250,9 @@ class FeynmanKacSampler(Sampler):
             w = torch.softmax(logw, dim=0)
             ess = 1.0 / w.pow(2).sum().clamp_min(1e-12)
             will_resample = (self.ess_frac is None) or (ess < self.ess_frac * K)
+            self.trace.append({"step": t_int + 1, "ess_over_k": float(ess) / K,
+                               "logw_range": float(logw.max() - logw.min()),
+                               "resampled": bool(will_resample)})
             if will_resample:
                 idx = _resample_indices(w, K, self.resample_scheme)
                 X, E, node_mask, y = X[idx], E[idx], node_mask[idx], y[idx]

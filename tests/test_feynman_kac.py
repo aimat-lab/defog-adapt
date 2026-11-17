@@ -133,3 +133,65 @@ def test_a_composition_is_scored_through_the_adapter_not_the_bare_base(small_mod
     # the denoise steps call the adapter via the composition; the reward scoring adds more calls
     # at every checkpoint, so the total must exceed the number of denoise steps alone
     assert len(calls) > sampler.sample_steps, len(calls)
+
+
+# ============================================================ the diagnostic trace
+def trace_of(model, **kw):
+    sampler = fk(model, **kw)
+    torch.manual_seed(2)
+    sampler.sample(10, device=CPU, show_progress=False)
+    return sampler.trace
+
+
+def test_the_trace_has_one_record_per_checkpoint(small_model):
+    """steps 20, warmup 0.4 -> the first checkpoint at step index 8, then every steps // 8 = 2, and
+    never the last step: indices 8, 10, 12, 14, 16, 18, reported as steps 9, 11, ..., 19."""
+    trace = trace_of(small_model, beta=1.0)
+    assert [r["step"] for r in trace] == [9, 11, 13, 15, 17, 19]
+    assert all(set(r) == {"step", "ess_over_k", "logw_range", "resampled"} for r in trace)
+
+
+def test_the_trace_is_empty_before_sampling_and_replaced_by_each_call(small_model):
+    sampler = fk(small_model, beta=1.0)
+    assert sampler.trace == []
+    sampler.sample(6, device=CPU, show_progress=False)
+    first = list(sampler.trace)
+    sampler.sample(6, device=CPU, show_progress=False)
+    assert len(sampler.trace) == len(first), "the trace of one call must not accumulate into the next"
+
+
+def test_a_vanishing_beta_never_engages_and_the_trace_says_so(small_model):
+    """The diagnostic's whole job: with beta ~ 0 the weights stay uniform, so the effective sample
+    size is the full particle count, nothing is resampled, and the weight spread is zero."""
+    trace = trace_of(small_model, beta=1e-9, ess_frac=0.5)
+    assert all(r["ess_over_k"] == pytest.approx(1.0, abs=1e-6) for r in trace)
+    assert all(r["logw_range"] < 1e-6 for r in trace)
+    assert not any(r["resampled"] for r in trace)
+
+
+def test_a_strong_beta_concentrates_the_weights_and_resamples(small_model):
+    trace = trace_of(small_model, beta=5.0, ess_frac=0.5)
+    assert any(r["resampled"] for r in trace)
+    assert max(r["logw_range"] for r in trace) > 1.0
+    assert min(r["ess_over_k"] for r in trace) < 0.9
+
+
+def test_the_resample_flag_follows_the_ess_threshold(small_model):
+    for r in trace_of(small_model, beta=2.0, ess_frac=0.5):
+        assert r["resampled"] == (r["ess_over_k"] < 0.5), r
+    assert all(r["resampled"] for r in trace_of(small_model, beta=0.0, ess_frac=None)), \
+        "with no ESS threshold every checkpoint resamples"
+
+
+def test_sampling_with_the_trace_is_still_deterministic_under_a_seed(small_model):
+    """Determinism only. That reading ESS and the weight range changes NOTHING about what is sampled
+    (no random draw, no tensor touched) is checked against the research package's own FK samples by
+    the bit-exact parity gate (tests/parity), which is the only comparison that can show it."""
+    def run():
+        sampler = fk(small_model, beta=2.0, ess_frac=0.5)
+        torch.manual_seed(9)
+        return sampler.sample(8, device=CPU, show_progress=False)
+
+    a, b = run(), run()
+    for x, y in zip(a, b):
+        assert torch.equal(x.x, y.x) and torch.equal(x.edge_index, y.edge_index)
