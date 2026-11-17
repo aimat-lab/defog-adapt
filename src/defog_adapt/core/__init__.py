@@ -77,13 +77,9 @@ from .adapter import (
     AdaLNAdapter,
     FingerprintEncoder,
     NodeConditionCrossAttention,
-    SpectrumEncoder,
     ConditionBranch,
-    GuideBranch,
     AdapterComposition,
-    AdapterRegistry,
     AdapterModule,
-    GroundedAdapterModule,
 )
 from .constraint import Constraint, SubgraphConstraint
 from .energy import MoleculePropertyEnergy
@@ -162,13 +158,9 @@ __all__ = [
     "AdaLNAdapter",
     "FingerprintEncoder",
     "NodeConditionCrossAttention",
-    "SpectrumEncoder",
     "ConditionBranch",
-    "GuideBranch",
     "AdapterComposition",
-    "AdapterRegistry",
     "AdapterModule",
-    "GroundedAdapterModule",
     "RefinementSampler",
     # Constraints (inpainting)
     "Constraint",

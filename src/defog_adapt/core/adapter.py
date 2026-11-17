@@ -28,7 +28,6 @@ Adapters are EXTERNAL objects (never attached to ``DeFoGModel``) so the base's
 """
 
 import math
-import os
 import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
@@ -66,9 +65,27 @@ DEFAULT_COND_FOURIER = 3
 _CONFIG_KEYS = frozenset({
     "cond_dim", "n_layers", "dims", "hidden", "time_conditioned", "streams",
     "time_emb_dim", "cond_mean", "cond_std", "name", "cond_type",
-    "interior_ff", "interior_attn", "base_token", "cond_encoder",
+    "base_token", "cond_encoder",
     "cond_fourier", "xattn_tokens", "xattn_dim", "xattn_heads",
 })
+
+# Flags that adapter configs written by the research package carry, for features this package
+# does not include (interior conditioning was superseded by cross-attention). A saved config
+# that has them switched OFF is exactly a plain adapter, so it loads; one that has them ON
+# needs heads this class does not have, and must fail loudly rather than load a different model.
+_REMOVED_FLAGS = ("interior_ff", "interior_attn")
+
+
+def _drop_removed_features(config: dict, where: str) -> dict:
+    """Return ``config`` without the removed-feature flags, refusing any that are enabled."""
+    cfg = dict(config)
+    for key in _REMOVED_FLAGS:
+        if cfg.pop(key, False):
+            raise ValueError(
+                f"{where} enables {key!r}, an adapter feature that is not part of defog-adapt "
+                f"(interior conditioning was superseded by node cross-attention). Load this "
+                f"adapter with the research package it was trained in.")
+    return cfg
 
 
 # ===========================================================================
@@ -116,80 +133,44 @@ class Modulation:
             X = X + delta
         return X, E, y
 
-    def bypass_rows(self, mask: torch.Tensor) -> "Modulation":
-        """Zero every gate for rows where ``mask`` is True (-> those rows bypass to
-        the frozen base). Used for optional condition-dropout during training."""
-        out = []
-        for m in self.layers:
-            d = dict(m)
-            for k in list(d.keys()):
-                if k.startswith("gate"):
-                    d[k] = torch.where(mask[:, None], torch.zeros_like(d[k]), d[k])
-            out.append(d)
-        xa = None
-        if self.xattn:
-            # Zeroing the FiLM gates alone would NOT make a dropped row bypass to the
-            # base once cross-attention exists -- its delta does not pass through any
-            # gate. Scale it per row instead, or condition dropout silently trains a
-            # model whose "unconditional" branch is still conditioned.
-            keep = (~mask).to(torch.float32)
-            xa = [[(sl, _row_scaled(fn, keep[sl])) for sl, fn in entries]
-                  for entries in self.xattn]
-        return Modulation(out, xattn=xa)
-
     @staticmethod
-    def stack_groups(mods: Sequence["Modulation"], bs: int, device,
-                     guide: Optional["Modulation"] = None) -> "Modulation":
-        """Build a ``(N+1)·bs`` modulation: group 0 = the negative branch,
-        groups 1..N = each adapter's modulation, concatenated along the batch dim.
+    def stack_groups(mods: Sequence["Modulation"], bs: int, device) -> "Modulation":
+        """Build a ``(N+1)·bs`` modulation: group 0 = the frozen base (all-zero rows, an exact
+        bypass -- the unconditional branch of classifier-free guidance), groups 1..N = each
+        adapter's modulation, concatenated along the batch dim.
 
-        Robust to HETEROGENEOUS key sets across branches: an adapter that lacks an
-        interior key (e.g. an output-only adapter composed with an interior-enabled
-        one) is treated as gate=0 -> exact bypass at that site. Takes the UNION of
-        keys over all branches and zero-fills any key a branch does not define.
-
-        ``guide`` is the AUTOGUIDANCE hook. Without it group 0 is all-zero, i.e. an
-        exact bypass to the frozen base -- the unconditional branch of ordinary CFG,
-        and the historical behaviour. With it, group 0 carries a DEGRADED CONDITIONAL's
-        modulation instead, so the blend pushes away from a weak version of the same
-        conditional model rather than away from the unconditional one (Karras et al.'s
-        autoguidance; MolGuidance reports it improving structural validity where CFG
-        costs it).
-
-        Note the invariant this preserves: a guide whose gates are all zero produces
-        exactly the zero row, so autoguidance with an *untrained* guide reduces to
-        standard CFG bit-for-bit. That is what ``test_guide_at_init_is_plain_cfg``
-        pins down, and it is why the zero-init gate convention had to be kept."""
-        all_mods = list(mods) if guide is None else [guide, *mods]
-        n_layers = len(all_mods[0].layers)
-        for m in all_mods:
+        Robust to HETEROGENEOUS key sets across branches: an adapter that lacks a key another
+        one has (e.g. one that modulates only the node stream next to one that modulates all
+        three) is treated as gate=0 -> exact bypass at that site. Takes the UNION of keys over
+        all branches and zero-fills any key a branch does not define."""
+        n_layers = len(mods[0].layers)
+        for m in mods:
             assert len(m.layers) == n_layers, (
-                f"modulation layer-count mismatch: {len(m.layers)} != {n_layers}; "
-                f"a guide adapter must have the same n_layers as the branches")
+                f"modulation layer-count mismatch: {len(m.layers)} != {n_layers}")
         combined = []
         for L in range(n_layers):
             keys = set()
-            for m in all_mods:
+            for m in mods:
                 keys |= set(m.layers[L].keys())
             d = {}
             for k in sorted(keys):
-                ch = next(m.layers[L][k].shape[-1] for m in all_mods if k in m.layers[L])
-                # group 0 first, then one row per branch. A missing key (or no guide at
-                # all) becomes zeros, which is an exact bypass at that site.
-                rows = []
-                for m in (guide, *mods):
-                    t = None if m is None else m.layers[L].get(k)
+                ch = next(m.layers[L][k].shape[-1] for m in mods if k in m.layers[L])
+                # group 0 first, then one row per branch. A missing key becomes zeros,
+                # which is an exact bypass at that site.
+                rows = [torch.zeros(bs, ch, device=device)]
+                for m in mods:
+                    t = m.layers[L].get(k)
                     rows.append(t if t is not None else torch.zeros(bs, ch, device=device))
                 d[k] = torch.cat(rows, dim=0)
             combined.append(d)
 
         # Cross-attention closures are re-homed from "all rows" onto this group's
-        # rows. Group g occupies [g*bs, (g+1)*bs); group 0 is the negative branch.
+        # rows. Group g occupies [g*bs, (g+1)*bs); group 0 is the frozen base.
         xa = None
-        if any(m.xattn for m in all_mods):
+        if any(m.xattn for m in mods):
             xa = [[] for _ in range(n_layers)]
-            for g, m in enumerate(all_mods if guide is not None else [None, *mods]):
-                if m is None or not m.xattn:
+            for g, m in enumerate(mods, start=1):
+                if not m.xattn:
                     continue
                 off = g * bs
                 for L in range(n_layers):
@@ -215,13 +196,6 @@ def _bind_xattn(module, tokens: torch.Tensor):
     def fn(X, x_mask):
         return x_mask * module(X, tokens)
     return fn
-
-
-def _row_scaled(fn, keep: torch.Tensor):
-    """Wrap a cross-attention closure so its delta is scaled per row (0 = bypass)."""
-    def wrapped(X, x_mask):
-        return fn(X, x_mask) * keep.view(-1, *([1] * (X.dim() - 1)))
-    return wrapped
 
 
 class NodeConditionCrossAttention(nn.Module):
@@ -328,11 +302,11 @@ class FingerprintEncoder(nn.Module):
     the narrowest point off the first layer so that "more bits" and "wider path" become
     separable choices rather than one confounded one.
 
-    Unlike :class:`SpectrumEncoder` there is no spatial structure to exploit: Morgan bits
-    are hash buckets, so adjacency is meaningless and a convolution would be modelling an
-    artifact of the hash. Depth with residual connections is the right prior instead —
-    it lets the encoder learn bit *co-occurrence* (substructures that appear together)
-    without assuming anything about bit ordering.
+    There is no spatial structure to exploit: Morgan bits are hash buckets, so adjacency is
+    meaningless and a convolution would be modelling an artifact of the hash. Depth with
+    residual connections is the right prior instead — it lets the encoder learn bit
+    *co-occurrence* (substructures that appear together) without assuming anything about
+    bit ordering.
 
     The adapter's exact-no-op-at-init property is unaffected: it comes from the zero-init
     gate heads, which sit downstream of this module.
@@ -359,8 +333,9 @@ class FingerprintEncoder(nn.Module):
                                       nn.Linear(self.hidden, self.out_dim))
 
     def _config(self) -> dict:
-        """Enough to rebuild this encoder — see :meth:`SpectrumEncoder._config` for why
-        omitting it would silently corrupt the GDPO KL reference."""
+        """Enough to rebuild this encoder. Without it, anything that reconstructs an adapter
+        from ``_config()`` — notably ``AdapterGDPOTrainer``'s frozen KL reference — would
+        rebuild it *without* the encoder and silently compare against a different model."""
         return dict(kind="mlp", in_dim=self.in_dim, out_dim=self.out_dim,
                     hidden=self.hidden, n_blocks=self.n_blocks, dropout=self.dropout)
 
@@ -373,61 +348,10 @@ class FingerprintEncoder(nn.Module):
         return self.proj_out(h)
 
 
-class SpectrumEncoder(nn.Module):
-    """1-D convolutional encoder for a ``[values(n_bins), mask(n_bins)]`` condition.
-
-    An adaLN trunk fed a raw 3602-dimensional vector has to learn from scratch that adjacent
-    bins are related, that a band is a local shape a few dozen bins wide, and that the mask
-    channel gates the value channel bin-by-bin. A spectrum has all of that structure by
-    construction, and a convolution gets it for free.
-
-    Position is preserved deliberately. Global pooling would answer "is there a carbonyl
-    somewhere" while discarding *where* — and where is the entire content of a spectrum. The
-    final adaptive pool keeps 16 coarse positions so the trunk still sees roughly which region
-    of the spectrum carries the signal.
-
-    The two channels are the value and the mask, so the convolution can learn "specified and
-    absent" as a distinct pattern from "unspecified" — the distinction the mask exists to make
-    and the one a flat vector buries.
-    """
-
-    def __init__(self, n_bins: int, out_dim: int = 256, channels: Sequence[int] = (32, 64, 128, 128),
-                 kernel: int = 9, pooled: int = 16):
-        super().__init__()
-        self.n_bins = int(n_bins)
-        self.out_dim = int(out_dim)
-        self.pooled = int(pooled)
-        self.channels = tuple(channels)
-        self.kernel = int(kernel)
-        layers, in_ch = [], 2
-        for ch in channels:
-            layers += [nn.Conv1d(in_ch, ch, kernel_size=kernel, stride=2, padding=kernel // 2),
-                       nn.GroupNorm(num_groups=min(8, ch), num_channels=ch), nn.SiLU()]
-            in_ch = ch
-        self.conv = nn.Sequential(*layers)
-        self.proj = nn.Linear(in_ch * self.pooled, self.out_dim)
-
-    def _config(self) -> dict:
-        """Enough to rebuild this encoder. Without it, anything that reconstructs an adapter
-        from ``_config()`` — notably ``AdapterGDPOTrainer``'s frozen KL reference — would
-        rebuild it *without* the encoder and silently compare against a different model."""
-        return dict(kind="spectrum_cnn", n_bins=self.n_bins, out_dim=self.out_dim,
-                    channels=list(self.channels), kernel=self.kernel, pooled=self.pooled)
-
-    def forward(self, c: torch.Tensor) -> torch.Tensor:
-        bs = c.size(0)
-        if c.size(-1) != 2 * self.n_bins:
-            raise ValueError(f"SpectrumEncoder expects {2 * self.n_bins} inputs, got {c.size(-1)}")
-        x = c.view(bs, 2, self.n_bins)          # channel 0 = values, 1 = mask
-        x = self.conv(x)
-        x = nn.functional.adaptive_avg_pool1d(x, self.pooled)
-        return self.proj(x.reshape(bs, -1))
-
-
 #: Condition encoders addressable from a saved config's ``kind`` field. Keeping the
 #: registry next to the classes means adding one is a single edit, and an unknown kind
 #: fails loudly at load rather than silently rebuilding the wrong architecture.
-_COND_ENCODERS = {"spectrum_cnn": SpectrumEncoder, "mlp": FingerprintEncoder}
+_COND_ENCODERS = {"mlp": FingerprintEncoder}
 
 
 class AdaLNAdapter(nn.Module):
@@ -442,7 +366,6 @@ class AdaLNAdapter(nn.Module):
                  hidden: int = 256, time_conditioned: bool = True,
                  streams: Sequence[str] = _STREAMS, time_emb_dim: int = 64,
                  cond_mean=None, cond_std=None, name: str = "", cond_type: str = "",
-                 interior_ff: bool = False, interior_attn: bool = False,
                  base_token: Optional[float] = None,
                  cond_encoder: Optional[nn.Module] = None,
                  cond_fourier: int = 0, xattn_tokens: int = 0,
@@ -456,8 +379,6 @@ class AdaLNAdapter(nn.Module):
         self.time_emb_dim = time_emb_dim
         self.streams = tuple(streams)
         self.name, self.cond_type = name, cond_type
-        self.interior_ff = bool(interior_ff)      # L4: pre-FFN FiLM on X,E
-        self.interior_attn = bool(interior_attn)  # L10: condition e_mul (edge->attn logits)
         self.base_token = base_token
         self.cond_fourier = int(cond_fourier)     # Fourier bands on the condition (0 = off)
         self.xattn_tokens = int(xattn_tokens)     # node->condition cross-attention (0 = off)
@@ -470,8 +391,14 @@ class AdaLNAdapter(nn.Module):
         if isinstance(cond_encoder, dict):
             spec = dict(cond_encoder)
             # Configs written before `kind` existed are all spectrum encoders, so that
-            # stays the default -- changing it would silently rebuild old adapters wrong.
+            # stays the default for them: a kind-less config must be reported as what it
+            # is, not rebuilt as something else.
             kind = spec.pop("kind", "spectrum_cnn")
+            if kind == "spectrum_cnn":
+                raise ValueError(
+                    "this adapter uses the spectrum condition encoder ('spectrum_cnn'), which "
+                    "is not part of defog-adapt. Load it with the research package it was "
+                    "trained in.")
             if kind not in _COND_ENCODERS:
                 raise ValueError(f"unknown cond_encoder kind {kind!r} in {cond_encoder!r}; "
                                  f"known: {sorted(_COND_ENCODERS)}")
@@ -488,8 +415,8 @@ class AdaLNAdapter(nn.Module):
         # the measured failure signature -- bias without tracking.
         #
         # LOW-DIMENSIONAL ONLY, which is the regime the result is about. A fingerprint
-        # or spectrum condition goes through its own encoder instead; expanding 512 hash
-        # bits into bands would be both meaningless and enormous.
+        # condition goes through its own encoder instead; expanding 512 hash bits into
+        # bands would be both meaningless and enormous.
         if self.cond_fourier < 0:
             raise ValueError(f"cond_fourier must be >= 0, got {self.cond_fourier}")
         if self.cond_fourier:
@@ -540,31 +467,6 @@ class AdaLNAdapter(nn.Module):
                 gate_l[s] = g
             self.ss.append(ss_l); self.gate.append(gate_l)
 
-        # --- L4 (pre-FFN adaLN-Zero): gated FiLM heads on X(dx), E(de) ---
-        if self.interior_ff:
-            self.ff = nn.ModuleList()
-            for _ in range(n_layers):
-                ff_l = nn.ModuleDict()
-                for s in ("X", "E"):
-                    ch = dims[_DIMKEY[s]]
-                    ff_l[f"ss_{s}"] = nn.Linear(hidden, 2 * ch)
-                    g = nn.Linear(hidden, ch)
-                    nn.init.zeros_(g.weight); nn.init.zeros_(g.bias)   # zero-init gate => no-op
-                    ff_l[f"gate_{s}"] = g
-                self.ff.append(ff_l)
-
-        # --- L10 (edge->attention-logit): gated FiLM head on e_mul (dx) ---
-        if self.interior_attn:
-            self.attn = nn.ModuleList()
-            ch = dims["dx"]
-            for _ in range(n_layers):
-                a_l = nn.ModuleDict()
-                a_l["ss"] = nn.Linear(hidden, 2 * ch)
-                g = nn.Linear(hidden, ch)
-                nn.init.zeros_(g.weight); nn.init.zeros_(g.bias)       # zero-init gate => no-op
-                a_l["gate"] = g
-                self.attn.append(a_l)
-
         # --- node -> condition cross-attention (one module per layer) -----------
         if self.xattn_tokens == 1:
             # softmax over ONE key is identically 1.0, so every node receives the same
@@ -599,8 +501,8 @@ class AdaLNAdapter(nn.Module):
         config, and a checkpoint written before cross-attention existed has no
         ``xattn_tokens`` key in it at all. Defaulting the mechanism ON in ``__init__``
         would reconstruct every one of those adapters with a cross-attention path their
-        state_dict does not contain -- and for an encoder adapter (fingerprint, spectrum)
-        it would hit the Fourier guard and raise outright. So ``__init__`` stays
+        state_dict does not contain -- and for an encoder adapter (fingerprint) it would
+        hit the Fourier guard and raise outright. So ``__init__`` stays
         conservative and means "exactly what the config says", while ``for_base`` means
         "what we would build today".
 
@@ -617,8 +519,8 @@ class AdaLNAdapter(nn.Module):
         if "cond_fourier" not in kw:
             # Fourier features are a result about LOW-dimensional inputs, and __init__
             # refuses them next to an encoder or a wide condition. An unconditional
-            # default would therefore make for_base() raise for every fingerprint and
-            # spectrum adapter, so the default is "on where it is legal", not "on".
+            # default would therefore make for_base() raise for every fingerprint
+            # adapter, so the default is "on where it is legal", not "on".
             legal = kw.get("cond_encoder") is None and cond_dim <= 8
             kw["cond_fourier"] = DEFAULT_COND_FOURIER if legal else 0
         return cls(cond_dim, n_layers, dims, **kw)
@@ -659,19 +561,8 @@ class AdaLNAdapter(nn.Module):
                 scale, shift = self.ss[L][s](h).chunk(2, dim=-1)
                 gate = self.gate[L][s](h)
                 d[f"scale{s}"], d[f"shift{s}"], d[f"gate{s}"] = scale, shift, gate
-            if self.interior_ff:                     # L4 pre-FFN keys
-                for s in ("X", "E"):
-                    sc, sh = self.ff[L][f"ss_{s}"](h).chunk(2, dim=-1)
-                    d[f"scale_ff{s}"], d[f"shift_ff{s}"], d[f"gate_ff{s}"] = sc, sh, self.ff[L][f"gate_{s}"](h)
-            if self.interior_attn:                   # L10 edge->attn keys
-                sc, sh = self.attn[L]["ss"](h).chunk(2, dim=-1)
-                d["scale_emul"], d["shift_emul"], d["gate_emul"] = sc, sh, self.attn[L]["gate"](h)
             layers.append(d)
         return Modulation(layers, xattn=xattn)
-
-    def interior_attn_parameters(self):
-        """L10 head params (for an optional smaller-LR optimizer group)."""
-        return list(self.attn.parameters()) if self.interior_attn else []
 
     # --- compatibility / io -------------------------------------------------
     def check_compatible(self, base):
@@ -695,7 +586,6 @@ class AdaLNAdapter(nn.Module):
                     hidden=self.hidden, time_conditioned=self.time_conditioned,
                     streams=list(self.streams), time_emb_dim=self.time_emb_dim,
                     name=self.name, cond_type=self.cond_type,
-                    interior_ff=self.interior_ff, interior_attn=self.interior_attn,
                     base_token=self.base_token,
                     cond_fourier=self.cond_fourier, xattn_tokens=self.xattn_tokens,
                     xattn_dim=self.xattn_dim, xattn_heads=self.xattn_heads)
@@ -718,8 +608,11 @@ class AdaLNAdapter(nn.Module):
         checkpoints written by :meth:`save`.
 
         Unknown config keys are ignored rather than raising, so a config written by a
-        newer version stays loadable as long as the tensors match.
+        newer version stays loadable as long as the tensors match. The one exception is a
+        feature this package does not include: a config that switches it on is refused (see
+        ``_REMOVED_FLAGS``), because ignoring the key would load a different model.
         """
+        config = _drop_removed_features(config, "adapter config")
         cfg = {k: v for k, v in config.items() if k in _CONFIG_KEYS}
         if "streams" in cfg:
             cfg["streams"] = tuple(cfg["streams"])
@@ -738,7 +631,8 @@ class AdaLNAdapter(nn.Module):
         if not path.endswith(".ckpt"):
             path = path + ".ckpt"
         ck = torch.load(path, map_location=device, weights_only=False)
-        cfg = dict(ck["config"]); cfg["streams"] = tuple(cfg["streams"])
+        cfg = _drop_removed_features(ck["config"], f"adapter checkpoint {path}")
+        cfg["streams"] = tuple(cfg["streams"])
         # Filter through _CONFIG_KEYS exactly as from_config does. The .ckpt path is the
         # one the run scripts use, and it was the stricter of the two: a checkpoint
         # written by a newer version raised TypeError here while from_config accepted it.
@@ -772,34 +666,13 @@ class ConditionBranch:
     weight: float = 2.0
 
 
-@dataclass
-class GuideBranch:
-    """The negative branch for autoguidance: a DEGRADED conditional model.
-
-    Ordinary CFG blends away from the frozen unconditional base. Autoguidance blends
-    away from a deliberately worse version of the *conditional* model -- undertrained,
-    or lower-capacity -- so that the flaws the two share cancel and only the quality
-    difference is amplified. The guide is normally conditioned on the SAME target as
-    the branch it negates.
-
-    Deliberately NOT a :class:`ConditionBranch`. That type carries a ``weight``, and a
-    weight on group 0 does nothing: ``_blend_logp`` reads group 0 as the baseline the
-    other branches are measured against, so a ``weight`` field here would be silently
-    ignored. Having no such field is the difference between a knob that does nothing
-    and a knob that *looks* like it does something.
-    """
-
-    adapter: AdaLNAdapter
-    condition: torch.Tensor
-
-
 class AdapterComposition:
     """N-branch product-of-experts spec consumed by ``denoise_step`` /
     ``AdaptedSampler``. ``mode='product'`` sums the log-ratios; ``'mean'`` averages
     (recommended for N>1 to keep the effective uncond coefficient bounded)."""
 
     def __init__(self, branches: Sequence[ConditionBranch], base=None, mode: str = "product",
-                 blend_space: str = "prob", guide: Optional[GuideBranch] = None):
+                 blend_space: str = "prob"):
         """
         ``mode`` is the FORM of the blend (geometric product vs its per-branch mean).
         ``blend_space`` is WHERE it is applied, and the two are independent axes:
@@ -824,28 +697,6 @@ class AdapterComposition:
         self.branches = list(branches)
         self.mode = mode
         self.blend_space = blend_space
-        self.guide = guide
-        if guide is not None:
-            # One guide negates one branch. With N>1 there is no defined answer to
-            # "which target is the guide conditioned on", and silently reusing one
-            # branch's target would make the other branches' guidance mean something
-            # nobody chose.
-            if len(self.branches) != 1:
-                raise ValueError(
-                    f"autoguidance is defined for a single branch; got {len(self.branches)}. "
-                    f"Compose without a guide, or run one property at a time.")
-            # blend_space="rate" reads group 0 as the base in a way autoguidance breaks:
-            # `_blend_rates` zeroes any transition where R[0] == 0, on the reasoning that
-            # a structurally-forbidden transition stays forbidden. With a guide, R[0] is
-            # the GUIDE's rate matrix, so that guard would silently start deriving the
-            # forbidden set from a degraded model. Untested, and the combination has no
-            # use: the w>1 sweep autoguidance exists to enable is exactly what rate space
-            # cannot do.
-            if blend_space != "prob":
-                raise ValueError(
-                    f"autoguidance requires blend_space='prob', got {blend_space!r}. "
-                    f"In rate space the forbidden-transition guard would be derived from "
-                    f"the guide instead of the base, and w>1 is broken there anyway.")
         # Cross-attention branches stack. Modulation carries them as (row_slice, closure)
         # per layer and stack_groups re-homes each closure onto its own group's rows, so a
         # second branch is one more entry at a different offset. This was refused while
@@ -855,8 +706,6 @@ class AdapterComposition:
         if base is not None:
             for b in self.branches:
                 b.adapter.check_compatible(base)
-            if guide is not None:
-                guide.adapter.check_compatible(base)
 
     def __len__(self):
         return len(self.branches)
@@ -873,69 +722,17 @@ class AdapterComposition:
 
     @torch.no_grad()
     def build_modulation(self, bs: int, t: torch.Tensor) -> Modulation:
-        """Combined ``(N+1)·bs`` modulation: group 0 = the negative branch (the frozen
-        base by default, the guide under autoguidance), group i = adapter_i."""
+        """Combined ``(N+1)·bs`` modulation: group 0 = the frozen base (all zeros, an exact
+        bypass), group i = adapter_i."""
         device = t.device
         mods = [br.adapter(self._broadcast_condition(br.condition, bs, device), t=t)
                 for br in self.branches]
-        guide_mod = None
-        if self.guide is not None:
-            guide_mod = self.guide.adapter(
-                self._broadcast_condition(self.guide.condition, bs, device), t=t)
-        return Modulation.stack_groups(mods, bs, device, guide=guide_mod)
+        return Modulation.stack_groups(mods, bs, device)
 
     def weights(self, device, dtype=torch.float32) -> torch.Tensor:
-        """``(N,)`` for scalar branch weights, ``(N, bs)`` if any branch carries a
-        per-molecule weight.
-
-        The per-molecule form exists for closed-loop control, where each molecule has its
-        own error signal and therefore earns its own guidance strength. Mixing the two is
-        allowed: a scalar branch is broadcast across the batch."""
-        ws = [b.weight for b in self.branches]
-        if not any(torch.is_tensor(w) and w.numel() > 1 for w in ws):
-            return torch.tensor([float(w) for w in ws], device=device, dtype=dtype)
-        bs = max(w.numel() for w in ws if torch.is_tensor(w))
-        rows = []
-        for w in ws:
-            if torch.is_tensor(w) and w.numel() > 1:
-                rows.append(w.to(device=device, dtype=dtype).reshape(-1))
-            else:
-                rows.append(torch.full((bs,), float(w), device=device, dtype=dtype))
-        return torch.stack(rows, dim=0)
-
-    def set_weights(self, ws):
-        for b, w in zip(self.branches, ws):
-            # A per-molecule weight vector must survive as a tensor; float() on it would
-            # raise, and coercing to a scalar would silently discard the per-molecule
-            # signal that closed-loop control exists to carry.
-            b.weight = w if (torch.is_tensor(w) and w.numel() > 1) else float(w)
-        return self
-
-
-class AdapterRegistry:
-    """Name -> adapter map, for hot-swapping adapters at inference."""
-
-    def __init__(self):
-        self._d: Dict[str, AdaLNAdapter] = {}
-
-    def register(self, name, adapter):
-        self._d[name] = adapter
-        return self
-
-    def get(self, name) -> AdaLNAdapter:
-        return self._d[name]
-
-    def names(self):
-        return list(self._d.keys())
-
-    @classmethod
-    def load_dir(cls, path, device="cpu") -> "AdapterRegistry":
-        reg = cls()
-        for fn in sorted(os.listdir(path)):
-            if fn.endswith(".ckpt"):
-                a = AdaLNAdapter.load(os.path.join(path, fn), device=device)
-                reg.register(a.name or os.path.splitext(fn)[0], a)
-        return reg
+        """``(N,)`` tensor of the branches' scalar CFG weights."""
+        return torch.tensor([float(b.weight) for b in self.branches],
+                            device=device, dtype=dtype)
 
 
 # ===========================================================================
@@ -967,26 +764,15 @@ class AdapterModule(_FrozenBaseModule):
     a direct conditional denoiser ``p(x1|x_t,c)``. The base is frozen and kept out of the
     checkpoints by :class:`_FrozenBaseModule`."""
 
-    def __init__(self, base, adapter: AdaLNAdapter, cond_attr: str = "cond",
-                 cond_drop_prob: float = 0.0, lr: float = 2e-4, l10_lr_scale: float = 1.0):
+    def __init__(self, base, adapter: AdaLNAdapter, cond_attr: str = "cond", lr: float = 2e-4):
         super().__init__()
         self._freeze_base(base)
         self.adapter = adapter
         self.cond_attr = cond_attr
-        self.cond_drop_prob = float(cond_drop_prob)
         self.lr = float(lr)
-        self.l10_lr_scale = float(l10_lr_scale)   # smaller LR on the L10 (attention) heads
 
     def configure_optimizers(self):
-        a = self.adapter
-        if a.interior_attn and self.l10_lr_scale != 1.0:
-            l10_ids = {id(p) for p in a.interior_attn_parameters()}
-            l10 = [p for p in a.parameters() if id(p) in l10_ids]
-            rest = [p for p in a.parameters() if id(p) not in l10_ids]
-            return torch.optim.AdamW(
-                [{"params": rest, "lr": self.lr},
-                 {"params": l10, "lr": self.lr * self.l10_lr_scale}], weight_decay=1e-5)
-        return torch.optim.AdamW(a.parameters(), lr=self.lr, weight_decay=1e-5)
+        return torch.optim.AdamW(self.adapter.parameters(), lr=self.lr, weight_decay=1e-5)
 
     def training_step(self, batch, batch_idx):
         self.base.eval()
@@ -998,80 +784,8 @@ class AdapterModule(_FrozenBaseModule):
             noisy = self.base._apply_noise(X1, E1, y0, node_mask)
             extra = self.base._compute_extra_data(noisy)
         mod = self.adapter(c, t=noisy["t"])
-        if self.cond_drop_prob:
-            drop = torch.rand(bs, device=device) < self.cond_drop_prob
-            mod = mod.bypass_rows(drop)
         pred = self.base.forward(noisy, extra, node_mask, cond_modulation=mod)
         loss = self.base.train_loss(pred_X=pred.X, pred_E=pred.E, pred_y=pred.y,
                                     true_X=X1, true_E=E1, true_y=y0, node_mask=node_mask)
         self.log("adapter/loss", loss, prog_bar=True, on_epoch=True, batch_size=bs)
-        return loss
-
-
-class GroundedAdapterModule(AdapterModule):
-    """Train an adapter AND a :class:`~defog_adapt.core.property_head.PropertyHead` in one run,
-    with the two objectives deliberately UNCOUPLED.
-
-    Two losses, one per module:
-
-    * ``L_denoise`` -- the base's own denoising CE, inherited verbatim from
-      :class:`AdapterModule`: the adapter becomes a conditional denoiser ``p(x1|x_t,c)``.
-    * ``L_ground`` -- ``MSE(head(true clean graph), normalized true property)``. A plain
-      supervised regression over REAL molecules.
-
-    **The head never sees the condition as an input, and no loss pushes the adapter through
-    the head.** That is the point, not an omission. A head fitted against the condition on
-    the adapter's own output can satisfy it by learning to detect *what the adapter was
-    aiming at* rather than *what the molecule is* -- and such a head is worthless as the
-    Feynman-Kac energy, because it would reward intent instead of achievement
-    (see :mod:`defog_adapt.core.property_head`). The soft-input self-consistency coupling that
-    couples them was tried and did not hold up; ``LearnedPropertyEnergy`` works because FK
-    feeds the head DISCRETE re-encoded graphs, which is a different input distribution from
-    the softmax tensors such a coupling would train on.
-
-    The normalization is read from the head's OWN ``prop_mean``/``prop_std`` buffers rather
-    than passed in separately, so the scale the head is trained at and the scale
-    ``PropertyHead.predict`` un-normalizes with cannot drift apart.
-
-    Args:
-        base: frozen unconditional ``DeFoGModel``.
-        adapter: the :class:`AdaLNAdapter` to train.
-        head: a ``PropertyHead`` constructed with ``prop_mean``/``prop_std`` of the data.
-        lr / lr_head: learning rates for the adapter and the head.
-        l10_lr_scale: smaller LR on the adapter's L10 (interior-attention) heads.
-        lambda_ground: weight on the grounding term.
-    """
-
-    def __init__(self, base, adapter, head, cond_attr: str = "cond",
-                 cond_drop_prob: float = 0.0, lr: float = 2e-4, lr_head: float = 1e-3,
-                 l10_lr_scale: float = 1.0, lambda_ground: float = 1.0):
-        super().__init__(base, adapter, cond_attr=cond_attr, cond_drop_prob=cond_drop_prob,
-                         lr=lr, l10_lr_scale=l10_lr_scale)
-        self.head = head
-        self.lr_head = float(lr_head)
-        self.lambda_ground = float(lambda_ground)
-
-    def configure_optimizers(self):
-        # Reuse the parent's adapter param groups (including the L10 validity guard) exactly,
-        # then attach the head as one more group. Rebuilding them here would risk the two
-        # drifting apart.
-        opt = super().configure_optimizers()
-        opt.add_param_group({"params": list(self.head.parameters()), "lr": self.lr_head})
-        return opt
-
-    def training_step(self, batch, batch_idx):
-        denoise = super().training_step(batch, batch_idx)
-
-        # _dense() is recomputed rather than threaded out of the parent's step: it is a
-        # to_dense() over one batch, negligible beside a 9-layer transformer forward, and the
-        # alternative is changing AdapterModule's contract for this subclass's benefit.
-        X1, E1, node_mask = self._dense(batch)
-        bs = X1.size(0)
-        c = getattr(batch, self.cond_attr).to(X1.device).view(bs, -1).float()
-        c_norm = (c.view(bs) - self.head.prop_mean) / self.head.prop_std
-
-        ground = torch.nn.functional.mse_loss(self.head(X1, E1, node_mask), c_norm)
-        loss = denoise + self.lambda_ground * ground
-        self.log_dict({"head/ground": ground, "train/loss": loss},
-                      prog_bar=True, on_epoch=True, batch_size=bs)
         return loss

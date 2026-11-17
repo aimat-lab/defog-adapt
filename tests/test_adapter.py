@@ -7,15 +7,15 @@ Run directly (prints PASS/FAIL):
 import os
 import sys
 import tempfile
+import warnings
 
 import torch
 from torch_geometric.loader import DataLoader
 
 from defog_adapt.domains.molecule import build_encoders, smiles_to_pyg_data
 from defog_adapt.core import (DeFoGModel, AdaLNAdapter, AdapterComposition, ConditionBranch,
-                        AdaptedSampler, Sampler, FeynmanKacSampler,
-                        FingerprintEncoder, SpectrumEncoder, GuideBranch,
-                        NodeConditionCrossAttention)
+                              AdaptedSampler, Sampler, FeynmanKacSampler,
+                              FingerprintEncoder, NodeConditionCrossAttention)
 from defog_adapt.core.data import to_dense
 from defog_adapt.core.layers import timestep_embedding
 
@@ -161,56 +161,16 @@ def test_save_load_roundtrip():
     return "save/load round-trip reproduces modulation + stats"
 
 
-def test_interior_null_equals_base():
-    """Interior (L4/L10) adapters must ALSO be exact no-ops at null (gate zero-init)."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    pred_base = model.forward(noisy, extra, mask)
-    for kw, tag in [(dict(interior_ff=True), "L4"),
-                    (dict(interior_attn=True), "L10"),
-                    (dict(interior_ff=True, interior_attn=True), "L4+L10")]:
-        adapter = AdaLNAdapter.for_base(model, cond_dim=2, hidden=32, **kw).eval()
-        mod = adapter(torch.randn(bs, 2), t=noisy["t"])
-        pred = model.forward(noisy, extra, mask, cond_modulation=mod)
-        dX = (pred_base.X - pred.X).abs().max()
-        assert torch.allclose(pred_base.X, pred.X, atol=1e-6) and \
-               torch.allclose(pred_base.E, pred.E, atol=1e-6), f"{tag} not no-op (maxdX={dX})"
-    return "interior L4/L10/both = base exact at null"
-
-
-def test_interior_live():
-    """Perturbing the interior gates must move the output (wiring is live, not ignored)."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    pred_base = model.forward(noisy, extra, mask)
-    moved = {}
-    for kw, tag, attr in [(dict(interior_ff=True), "L4", "ff"),
-                          (dict(interior_attn=True), "L10", "attn")]:
-        adapter = AdaLNAdapter.for_base(model, cond_dim=2, hidden=32, **kw).eval()
-        with torch.no_grad():
-            for ld in getattr(adapter, attr):
-                for k in ld:
-                    if k.startswith("gate"):
-                        ld[k].bias.add_(0.5)
-        mod = adapter(torch.randn(bs, 2), t=noisy["t"])
-        pred = model.forward(noisy, extra, mask, cond_modulation=mod)
-        m = (pred_base.X - pred.X).abs().max().item()
-        # live threshold 1e-5 is 10x above the verified <1e-6 no-op floor; the L10
-        # attention-logit path is more dampened than L4's direct node FiLM in the toy model.
-        assert m > 1e-5, f"{tag} did not move output (maxdX={m})"
-        moved[tag] = m
-    return f"interior live: L4 dX={moved['L4']:.2g}, L10 dX={moved['L10']:.2g}"
-
-
 def test_stack_groups_heterogeneous():
-    """stack_groups must handle adapters with DIFFERENT key sets (interior vs output-
-    only) in BOTH orders: no crash, union keys, (N+1)*bs rows, group-0 zero."""
+    """stack_groups must handle adapters with DIFFERENT key sets (one modulating all three
+    streams, one only the node stream) in BOTH orders: no crash, union keys, (N+1)*bs rows,
+    group-0 zero."""
     from defog_adapt.core.adapter import Modulation
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a_out = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a_int = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, interior_ff=True, interior_attn=True).eval()
-    for order in ([a_int, a_out], [a_out, a_int]):
+    a_all = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a_x = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
+    for order in ([a_x, a_all], [a_all, a_x]):
         mods = [ad(torch.zeros(bs, 1), t=noisy["t"]) for ad in order]
         stk = Modulation.stack_groups(mods, bs, "cpu")
         want = set(mods[0].layers[0]) | set(mods[1].layers[0])
@@ -221,17 +181,18 @@ def test_stack_groups_heterogeneous():
     return "stack_groups unions heterogeneous keys + group-0 bypass (both orders)"
 
 
-def test_interior_composability_bypass():
-    """Compose an INTERIOR adapter with an OUTPUT-ONLY adapter (the swappable+stackable
-    case that crashed pre-fix): every group of the (N+1)*bs forward must == base uncond."""
+def test_heterogeneous_streams_compose_and_bypass():
+    """Compose a node-stream-only adapter with an all-streams adapter (the swappable+
+    stackable case that crashed pre-fix): every group of the (N+1)*bs forward must == base
+    uncond."""
     import torch.nn.functional as F
     from defog_adapt.core.data import PlaceHolder
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a_out = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a_int = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, interior_ff=True, interior_attn=True).eval()
+    a_all = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a_x = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
     comp = AdapterComposition(
-        [ConditionBranch(a_int, torch.zeros(bs, 1), 1.0), ConditionBranch(a_out, torch.ones(bs, 1), 1.0)],
+        [ConditionBranch(a_x, torch.zeros(bs, 1), 1.0), ConditionBranch(a_all, torch.ones(bs, 1), 1.0)],
         base=model, mode="mean")
     rep = len(comp) + 1
     mod = comp.build_modulation(bs, noisy["t"])
@@ -244,26 +205,7 @@ def test_interior_composability_bypass():
     base_pred = F.softmax(model.forward(noisy, extra, mask).X, -1)
     for g in range(rep):
         assert torch.allclose(pX[g], base_pred, atol=1e-6), f"group {g} != base (heterogeneous compose)"
-    return f"heterogeneous compose (interior+output-only): all {rep} groups == base"
-
-
-def test_interior_save_load():
-    """Interior adapter round-trips: flags in config, heads in state_dict."""
-    model, loader = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=2, hidden=32, interior_ff=True,
-                              interior_attn=True, name="int").eval()
-    with torch.no_grad():
-        for ld in a.attn:
-            ld["gate"].weight.add_(torch.randn_like(ld["gate"].weight) * 0.01)
-    c, t = torch.randn(2, 2), torch.rand(2, 1)
-    m0 = a(c, t=t).layers[0]["gate_emul"]
-    with tempfile.TemporaryDirectory() as d:
-        p = a.save(os.path.join(d, "ai"))
-        b = AdaLNAdapter.load(p)
-    assert b.interior_ff and b.interior_attn, "interior flags lost on load"
-    m1 = b(c, t=t).layers[0]["gate_emul"]
-    assert torch.allclose(m0, m1, atol=1e-6), "interior save/load changed modulation"
-    return "interior adapter save/load round-trip (flags + heads)"
+    return f"heterogeneous compose (X-only + all streams): all {rep} groups == base"
 
 
 def test_fk_over_adapter_runs():
@@ -307,19 +249,26 @@ def test_fingerprint_encoder_shape_and_config():
 
 
 def test_cond_encoder_registry_dispatch():
-    """kind='mlp' must build a FingerprintEncoder; an unknown kind must fail loudly;
-    and a config with NO kind must still build a SpectrumEncoder -- every adapter saved
-    before `kind` existed depends on that default."""
+    """kind='mlp' must build a FingerprintEncoder; an unknown kind must fail loudly; and the
+    spectrum encoder (a kind-less legacy config, or kind='spectrum_cnn') is not part of this
+    package, so it must say so rather than build something else."""
     model, _ = build_tiny_model()
     a = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
                               cond_encoder=dict(kind="mlp", in_dim=64, out_dim=16, hidden=32,
                                                 n_blocks=1))
     assert isinstance(a.cond_encoder, FingerprintEncoder)
 
-    legacy = AdaLNAdapter.for_base(model, cond_dim=8, hidden=32,
-                                   cond_encoder=dict(n_bins=4, out_dim=16))
-    assert isinstance(legacy.cond_encoder, SpectrumEncoder), \
-        "a kind-less config must still resolve to SpectrumEncoder (backward compat)"
+    for spec, label in ((dict(n_bins=4, out_dim=16), "kind-less legacy"),
+                        (dict(kind="spectrum_cnn", n_bins=4, out_dim=16), "spectrum_cnn")):
+        try:
+            AdaLNAdapter.for_base(model, cond_dim=8, hidden=32, cond_encoder=spec)
+        except ValueError as exc:
+            # The generic "unknown kind" message would also contain the word "spectrum";
+            # what the caller needs is to be told this one is deliberately not supported.
+            assert "spectrum" in str(exc) and "not part of defog-adapt" in str(exc), \
+                f"{label}: message does not say the encoder is unsupported: {exc!r}"
+        else:
+            raise AssertionError(f"{label} spectrum encoder config must raise")
 
     try:
         AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
@@ -328,7 +277,7 @@ def test_cond_encoder_registry_dispatch():
         assert "no_such_encoder" in str(exc)
     else:
         raise AssertionError("unknown encoder kind must raise, not build something else")
-    return "cond_encoder registry: mlp dispatches, legacy defaults, unknown raises"
+    return "cond_encoder registry: mlp dispatches, spectrum and unknown kinds raise"
 
 
 def test_encoder_adapter_null_equals_base_and_roundtrips():
@@ -337,7 +286,7 @@ def test_encoder_adapter_null_equals_base_and_roundtrips():
     rebuilding the encoder from the serialized config rather than dropping it."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32, interior_ff=True,
+    a = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
                               cond_encoder=dict(kind="mlp", in_dim=64, out_dim=16,
                                                 hidden=32, n_blocks=1)).eval()
     pred_base = model.forward(noisy, extra, mask)
@@ -391,14 +340,65 @@ def test_zero_gate_is_noop_in_prob_space_at_any_weight():
 
 
 # ===========================================================================
-# Autoguidance: group 0 is a degraded conditional instead of the frozen base
+# Saved configs written by the research package
 # ===========================================================================
+def test_legacy_config_with_the_removed_flags_off_loads_silently():
+    """Adapters saved by the research package carry interior_ff / interior_attn = False. With
+    both off they ARE a plain adapter, so they must load -- through from_config and through the
+    .ckpt path -- without the 'ignoring unknown config keys' warning, and behave identically."""
+    model, loader = build_tiny_model()
+    noisy, extra, mask, bs = a_noisy(model, loader)
+    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, name="old").eval(), seed=1)
+    cfg = a.config()
+    assert "interior_ff" not in cfg and "interior_attn" not in cfg, "config still emits removed keys"
+    cfg.update(interior_ff=False, interior_attn=False)       # what the research package wrote
+    c = torch.full((bs, 1), 0.7)
+    want = a(c, t=noisy["t"]).layers[0]["gateX"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                       # an unknown-key warning would fail
+        b = AdaLNAdapter.from_config(cfg, a.state_dict()).eval()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "old.ckpt")
+            torch.save({"state_dict": a.state_dict(), "config": cfg}, path)
+            c2 = AdaLNAdapter.load(path).eval()
+    for tag, m in (("from_config", b), ("load", c2)):
+        got = m(c, t=noisy["t"]).layers[0]["gateX"]
+        assert torch.allclose(want, got, atol=1e-6), f"{tag} changed the modulation"
+    return "legacy config with removed flags off loads silently via from_config and .ckpt"
+
+
+def test_legacy_config_with_a_removed_flag_on_raises():
+    """A saved adapter that DOES use interior conditioning needs heads this class does not
+    have. Ignoring the key would load a different model without a word, so it must raise, and
+    name the key."""
+    model, _ = build_tiny_model()
+    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    for flag in ("interior_ff", "interior_attn"):
+        cfg = a.config()
+        cfg[flag] = True
+        try:
+            AdaLNAdapter.from_config(cfg, a.state_dict())
+        except ValueError as exc:
+            assert flag in str(exc), f"message does not name {flag}: {exc!r}"
+        else:
+            raise AssertionError(f"{flag}=True must raise from_config")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "int.ckpt")
+            torch.save({"state_dict": a.state_dict(), "config": cfg}, path)
+            try:
+                AdaLNAdapter.load(path)
+            except ValueError as exc:
+                assert flag in str(exc)
+            else:
+                raise AssertionError(f"{flag}=True must raise from .ckpt load")
+    return "removed interior flags: off loads, on raises with the flag's name (both load paths)"
+
+
 def _wake_gates(adapter, seed, scale=0.5):
     """Zero-init gates make an adapter an exact no-op. Give it real ones so it moves.
 
-    Without this every autoguidance test passes trivially -- guide and base would be
-    the same model -- which is exactly the inert-control failure `dam_result.md`
-    records. The tests below that need a LIVE guide all go through here."""
+    Without this a test that compares an adapter against the base passes trivially -- the
+    two would be the same model."""
     g = torch.Generator().manual_seed(seed)
     with torch.no_grad():
         for layer in adapter.gate:
@@ -406,153 +406,6 @@ def _wake_gates(adapter, seed, scale=0.5):
                 layer[s].weight.normal_(0.0, scale, generator=g)
                 layer[s].bias.normal_(0.0, scale, generator=g)
     return adapter
-
-
-def _blend_of(model, comp, noisy, extra, mask, bs, w_val):
-    """(per-group clean marginals, PoE-blended log q) for one composition."""
-    import torch.nn.functional as F
-    from defog_adapt.core.data import PlaceHolder
-    rep = len(comp) + 1
-    mod = comp.build_modulation(bs, noisy["t"])
-    nd = {"X_t": noisy["X_t"].repeat(rep, 1, 1), "E_t": noisy["E_t"].repeat(rep, 1, 1, 1),
-          "y_t": noisy["y_t"].repeat(rep, 1), "t": noisy["t"].repeat(rep, 1),
-          "node_mask": mask.repeat(rep, 1)}
-    extra_b = PlaceHolder(X=extra.X.repeat(rep, 1, 1), E=extra.E.repeat(rep, 1, 1, 1),
-                          y=extra.y.repeat(rep, 1))
-    pred = model.forward(nd, extra_b, nd["node_mask"], cond_modulation=mod)
-    pX = F.softmax(pred.X, -1).view(rep, bs, *pred.X.shape[1:])
-    w = pX.new_tensor([w_val])
-    return pX, F.log_softmax(model._blend_logp(pX, w, "product"), dim=-1)
-
-
-def test_no_guide_group0_is_exactly_zero():
-    """Regression on the stack_groups refactor: with no guide, every group-0 row must
-    still be exactly zero, i.e. an exact bypass to the frozen base."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=1)
-    comp = AdapterComposition([ConditionBranch(a, torch.full((bs, 1), 0.7), 2.0)], base=model)
-    mod = comp.build_modulation(bs, noisy["t"])
-    n_checked = 0
-    for L, d in enumerate(mod.layers):
-        for k, v in d.items():
-            assert torch.count_nonzero(v[:bs]) == 0, f"layer {L} key {k}: group 0 not zero"
-            n_checked += 1
-    assert n_checked > 0, "no modulation keys were checked"
-    return f"no-guide group 0 exactly zero across {n_checked} keys"
-
-
-def test_guide_at_init_is_plain_cfg():
-    """THE invariant. A zero-init guide IS the frozen base, so autoguidance with an
-    untrained guide must reduce to standard CFG bit-for-bit. If this ever fails, the
-    guide is being wired in somewhere other than group 0."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=2)
-    cond = torch.full((bs, 1), 0.7)
-    plain = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model)
-    fresh_guide = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()   # gates zero
-    guided = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model,
-                                guide=GuideBranch(fresh_guide, cond))
-    pX_p, q_p = _blend_of(model, plain, noisy, extra, mask, bs, 2.0)
-    pX_g, q_g = _blend_of(model, guided, noisy, extra, mask, bs, 2.0)
-    assert torch.allclose(pX_p[0], pX_g[0], atol=1e-6), "group 0 moved under a zero-init guide"
-    assert torch.allclose(q_p, q_g, atol=1e-6), "blend moved under a zero-init guide"
-    return "zero-init guide == plain CFG (group 0 and blend both unchanged)"
-
-
-def test_live_guide_changes_group0_and_the_blend():
-    """A guide with real gates must move group 0 AND the blend. The paired assertion
-    matters: moving group 0 without moving the blend would mean the negative branch is
-    computed and then discarded."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=3)
-    guide = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=4)
-    cond = torch.full((bs, 1), 0.7)
-    plain = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model)
-    guided = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model,
-                                guide=GuideBranch(guide, cond))
-    pX_p, q_p = _blend_of(model, plain, noisy, extra, mask, bs, 2.0)
-    pX_g, q_g = _blend_of(model, guided, noisy, extra, mask, bs, 2.0)
-    assert not torch.allclose(pX_p[0], pX_g[0], atol=1e-5), "live guide left group 0 unchanged"
-    assert torch.allclose(pX_p[1], pX_g[1], atol=1e-6), "the CONDITIONAL branch moved; only group 0 should"
-    assert not torch.allclose(q_p, q_g, atol=1e-5), "live guide left the blend unchanged"
-    d = (q_p - q_g).abs().max().item()
-    return f"live guide moves group 0 and the blend (max |dlog q| = {d:.4f}), branch 1 untouched"
-
-
-def test_guide_condition_is_used():
-    """The guide is conditioned, not just a second unconditional pass: changing its
-    target must change group 0."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=5)
-    guide = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=6)
-    cond = torch.full((bs, 1), 0.7)
-    lo = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model,
-                            guide=GuideBranch(guide, torch.full((bs, 1), -2.0)))
-    hi = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model,
-                            guide=GuideBranch(guide, torch.full((bs, 1), 2.0)))
-    pX_lo, _ = _blend_of(model, lo, noisy, extra, mask, bs, 2.0)
-    pX_hi, _ = _blend_of(model, hi, noisy, extra, mask, bs, 2.0)
-    assert not torch.allclose(pX_lo[0], pX_hi[0], atol=1e-5), "guide ignored its own condition"
-    return "guide honours its condition (group 0 differs between targets)"
-
-
-def test_guide_broadcasts_a_scalar_condition():
-    """A downstream pipeline passes torch.tensor([target]) -- shape (1,), not (bs, 1). The guide must
-    broadcast it the same way a branch does, or the batched forward silently mis-shapes."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=7)
-    guide = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=8)
-    comp = AdapterComposition([ConditionBranch(a, torch.tensor([0.7]), 2.0)], base=model,
-                              guide=GuideBranch(guide, torch.tensor([0.7])))
-    mod = comp.build_modulation(bs, noisy["t"])
-    rep = len(comp) + 1
-    for L, d in enumerate(mod.layers):
-        for k, v in d.items():
-            assert v.size(0) == rep * bs, f"layer {L} key {k}: got {v.size(0)}, want {rep*bs}"
-    return f"scalar (1,) guide condition broadcasts to {rep}*{bs} rows"
-
-
-def test_guide_rejects_multi_branch_and_rate_space():
-    """Both guards must fire. A guide with N>1 has no defined target, and in rate space
-    `_blend_rates` would derive the forbidden-transition set from the guide."""
-    model, loader = build_tiny_model()
-    a1 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a2 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    g = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    cond = torch.tensor([0.7])
-    try:
-        AdapterComposition([ConditionBranch(a1, cond, 2.0), ConditionBranch(a2, cond, 2.0)],
-                           base=model, guide=GuideBranch(g, cond))
-        raise AssertionError("multi-branch guide was accepted")
-    except ValueError as e:
-        assert "single branch" in str(e), f"wrong error: {e}"
-    try:
-        AdapterComposition([ConditionBranch(a1, cond, 2.0)], base=model,
-                           blend_space="rate", guide=GuideBranch(g, cond))
-        raise AssertionError("rate-space guide was accepted")
-    except ValueError as e:
-        assert "blend_space" in str(e), f"wrong error: {e}"
-    return "guide guards fire on N>1 and on blend_space='rate'"
-
-
-def test_guided_sampler_runs():
-    """End to end: AdaptedSampler with a guide samples without error."""
-    model, loader = build_tiny_model()
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=9)
-    guide = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=10)
-    cond = torch.tensor([0.7])
-    comp = AdapterComposition([ConditionBranch(a, cond, 2.0)], base=model,
-                              guide=GuideBranch(guide, cond))
-    torch.manual_seed(0)
-    graphs = AdaptedSampler(model, comp, sample_steps=5, eta=0.0, omega=0.0).sample(
-        4, device="cpu", show_progress=False)
-    assert len(graphs) == 4, f"got {len(graphs)} graphs"
-    return f"guided AdaptedSampler produced {len(graphs)} graphs"
 
 
 
@@ -889,23 +742,6 @@ def test_xattn_only_touches_its_own_group_in_a_stacked_forward():
     return "stacked forward: group 0 == frozen base, group 1 modulated"
 
 
-def test_xattn_bypass_rows_silences_it():
-    """Condition dropout must produce a genuinely UNCONDITIONAL row. Zeroing the FiLM
-    gates is not enough once cross-attention exists -- its delta passes through no gate."""
-    model, loader = build_tiny_model()
-    noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
-                                          xattn_dim=32, xattn_heads=4).eval(), seed=13)
-    mod = a(torch.full((bs, 1), 0.7), t=noisy["t"])
-    drop = torch.ones(bs, dtype=torch.bool)                 # drop every row
-    dropped = mod.bypass_rows(drop)
-    pred = model.forward(noisy, extra, mask, cond_modulation=dropped)
-    base_pred = model.forward(noisy, extra, mask)
-    d = (pred.X - base_pred.X).abs().max().item()
-    assert d < 1e-6, f"fully-dropped rows still differ from the base (max|dX|={d:.3e})"
-    return "bypass_rows silences cross-attention as well as the FiLM gates"
-
-
 def test_two_xattn_adapters_stack_without_crosstalk():
     """Composition of TWO cross-attention adapters: each group must reproduce that
     adapter's solo forward, and group 0 must stay the frozen base.
@@ -1069,23 +905,15 @@ if __name__ == "__main__":
         test_empty_composition_fallthrough,
         test_adapted_sampler_runs_and_steers_shapewise,
         test_save_load_roundtrip,
-        test_interior_null_equals_base,
-        test_interior_live,
         test_stack_groups_heterogeneous,
-        test_interior_composability_bypass,
-        test_interior_save_load,
+        test_heterogeneous_streams_compose_and_bypass,
         test_fk_over_adapter_runs,
         test_fingerprint_encoder_shape_and_config,
         test_cond_encoder_registry_dispatch,
         test_encoder_adapter_null_equals_base_and_roundtrips,
         test_zero_gate_is_noop_in_prob_space_at_any_weight,
-        test_no_guide_group0_is_exactly_zero,
-        test_guide_at_init_is_plain_cfg,
-        test_live_guide_changes_group0_and_the_blend,
-        test_guide_condition_is_used,
-        test_guide_broadcasts_a_scalar_condition,
-        test_guide_rejects_multi_branch_and_rate_space,
-        test_guided_sampler_runs,
+        test_legacy_config_with_the_removed_flags_off_loads_silently,
+        test_legacy_config_with_a_removed_flag_on_raises,
         test_fourier_and_xattn_are_exact_noops_at_init,
         test_fourier_widens_the_condition_path_and_keeps_the_raw_scalar,
         test_fourier_resolves_nearby_targets_better_than_a_raw_scalar,
@@ -1097,7 +925,6 @@ if __name__ == "__main__":
         test_film_delta_is_masked_on_padded_nodes_and_edges,
         test_xattn_masks_padded_nodes,
         test_xattn_only_touches_its_own_group_in_a_stacked_forward,
-        test_xattn_bypass_rows_silences_it,
         test_two_xattn_adapters_stack_without_crosstalk,
         test_fourier_xattn_save_load_roundtrip,
         test_for_base_defaults_to_cross_attention_and_fourier,

@@ -197,12 +197,9 @@ def fit_property_head(head, graphs, *, epochs: int = 60, lr: float = 1e-3, batch
                       progress=None):
     """Fit a :class:`PropertyHead` on its own, by grounding regression.
 
-    The head is normally trained jointly with an adapter
-    (:class:`defog_adapt.core.adapter.GroundedAdapterModule`), which is fine when the head is
-    a by-product of that run. It is NOT fine when the head's whole purpose is to be an
-    INDEPENDENT ruler — as in a downstream refinement step, which fits a second head to score a
-    policy that was optimised against the first. That use needs a fit path with no adapter
-    anywhere near it, which is this.
+    The head is fitted on its own, with no adapter anywhere near it. That matters when its
+    whole purpose is to be an INDEPENDENT ruler: for example a second head that scores a
+    policy which was optimised against the first.
 
     ``graphs`` are PyG ``Data`` objects carrying the RAW target in ``.cond``, exactly as the
     training pipeline builds them. Targets are normalised with the head's own buffers, so the
