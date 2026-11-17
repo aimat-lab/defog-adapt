@@ -47,8 +47,12 @@ recipes need PyComex, which caps `numpy<2`, so run them in an environment built 
 - **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
   in one and every link and anchor. Every number in `docs/results.md` needs a source and its protocol.
 - **No network and no local data in unit tests.** Reference-split tests pass `download=False`.
-- **Never commit** checkpoints, datasets, experiment output, cluster names, job IDs, local paths, or the names
-  of sibling projects. `tests/test_no_private_references.py` fails if one appears in a shipped file.
+- **Never commit** checkpoints, datasets, experiment output, cluster or account names, job IDs, local paths, or
+  the names of sibling projects. `tests/test_no_private_references.py` fails on the generic patterns (paths,
+  scheduler commands, job numbers, addresses) everywhere. The SPECIFIC names (a published list of private names is
+  itself a leak) are read from a file named by `DEFOG_ADAPT_PRIVATE_PATTERNS`, one regex per line, that the
+  maintainer keeps OUTSIDE the repository; set it when running the suite locally. Before publishing a history,
+  scan **every commit**, not just the tip: the intermediate commits of a port are where leaks hide.
 - **Dependency floors are tested**, not guessed: the suite passes with every dependency at its minimum on
   Python 3.10. Change a floor only by running it.
 - Nothing is pushed or published (GitHub, TestPyPI, PyPI) without an explicit go-ahead.
