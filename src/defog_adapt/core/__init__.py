@@ -81,7 +81,7 @@ from .adapter import (
     AdapterModule,
 )
 from .constraint import Constraint, SubgraphConstraint
-from .energy import MoleculePropertyEnergy
+from .energy import MoleculePropertyEnergy, StandardisedEnergy
 from .feynman_kac import FeynmanKacSampler, predict_clean
 from .property_head import PropertyHead, LearnedPropertyEnergy, fit_property_head, fit_size_model
 from .spectrum import Band, SpectrumEnergy, band_masses
@@ -162,6 +162,7 @@ __all__ = [
     "SubgraphConstraint",
     # Feynman-Kac steering: energies, property heads, sampler (arXiv:2601.10403)
     "MoleculePropertyEnergy",
+    "StandardisedEnergy",
     "PropertyHead",
     "fit_property_head",
     "fit_size_model",
