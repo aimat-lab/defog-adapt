@@ -28,10 +28,10 @@ training__e1.py ─▶ rl_sanity__zinc.py (×2) ─▶ adapter_training__zinc.py
 
 1. **Train a base**: `python examples/training__e1.py --DATASET "'zinc'"` (300 epochs, which does not
    fit in one cluster allocation, so it chains across wall-clock windows; see that file's docstring).
-2. **Optionally clean it up** with `rl_sanity__zinc.py`. The recorded adapters were trained on a base
-   that had had two rounds of this. See [`docs/caveats.md`](../docs/caveats.md): that base was also
-   trained under an *earlier* configuration than `training__e1.py` reproduces, and no adapter run on an
-   `training__e1.py` base is recorded.
+2. **Clean it up** with `rl_sanity__zinc.py`, twice (the second round starts from the first's best
+   checkpoint). The recorded adapters were trained on a base that had had exactly these two rounds, so
+   steps 1 and 2 reproduce their lineage; see [`docs/caveats.md`](../docs/caveats.md) for a trap in
+   reading that checkpoint's stored hyperparameters.
 3. **Train an adapter** per property (`adapter_training__zinc.py`), then a **head and size model** for it
    (`fit_property_head__zinc.py --with-size-model`) using the *same* `--property-from` convention.
 4. **Steer** with `steer_zinc.py`, or fine-tune the adapter further with `adapter_rl_finetune__zinc.py`.

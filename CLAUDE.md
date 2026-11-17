@@ -7,34 +7,63 @@ Guidance for working in this repository.
 `defog-adapt` (import `defog_adapt`) is a standalone, PyPI-targeted port of the `defog/` package of a
 research fork of DeFoG (discrete flow matching for graph generation). It keeps **only features with
 a recorded positive result**; null, negative, superseded and untried features were left out on
-purpose. Do not re-add a feature without evidence that it works.
+purpose. Do not re-add a feature without evidence that it works, and say what the evidence is.
 
 ## Layout
 
-- `src/defog_adapt/core/` base model, adapters, samplers, Feynman-Kac steering, RL, size models
+- `src/defog_adapt/core/` base model, adapters, samplers, Feynman-Kac steering, energies, RL, size models
 - `src/defog_adapt/domains/molecule.py` RDKit decode/encode/metrics (needs the `chem` extra)
-- `src/defog_adapt/data/` reference-split loaders (ZINC250k, MOSES) and vocabularies
-- `tests/` CPU-only unit tests; `tests/parity/` opt-in comparison against golden outputs of the
-  research repo
-- `examples/` PyComex recipes (optional `recipes` extra); `docs/`
+- `src/defog_adapt/data/` reference-split loaders (ZINC250k, MOSES, ChEMBL) and vocabularies
+- `src/defog_adapt/presets.py` the recorded recipes as plain data (every value has its evidence in a comment)
+- `tests/` CPU-only unit tests; `tests/parity/` opt-in comparison against golden outputs of the research repo;
+  `tests/test_recipes.py` opt-in smoke runs of every recipe
+- `examples/` the quickstart, the PyComex recipes (optional `recipes` extra) and `steer_zinc.py`, the assembly
+- `docs/` adapters, steering, rl, results, caveats, migration
 
 ## Commands
 
 ```bash
-uv venv --python 3.12 .venv && uv pip install -e ".[chem,data,dev]"   # CPU torch: see docs
-.venv/bin/python -m pytest                                              # unit tests, no network
+uv venv --python 3.12 .venv && uv pip install -e ".[chem,data,dev]"   # CPU torch first: see the README
+OMP_NUM_THREADS=2 .venv/bin/python -m pytest -n 8                       # unit tests, no network, ~30 s
 DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest -m parity   # parity gate (local only)
+DEFOG_ADAPT_HOME=/path/to/data DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest tests/test_recipes.py
 ```
+
+Without `OMP_NUM_THREADS=2` the suite takes many times longer: tiny tensors across every core thrash. The
+recipes need PyComex, which caps `numpy<2`, so run them in an environment built from `.[recipes]`.
 
 ## Rules
 
-- **Parity gate.** After every change to a ported module, the parity tests must still match the
-  golden outputs. Any drift must be understood, not tolerated.
-- **Checkpoint compatibility.** Every config key present in existing checkpoints stays accepted;
-  removed features accept only their neutral value and otherwise raise a clear error.
+- **Parity gate.** After every change to a ported module, the parity tests must still match the golden
+  outputs bit for bit. Run it on a `git archive` snapshot, not the working tree (the library imports lazily).
+  Any drift must be understood, not tolerated.
+- **Checkpoint compatibility.** Every config key present in existing checkpoints stays accepted; removed
+  features accept only their neutral value and otherwise raise a clear error.
+- **Test your tests.** Every new test is checked against a deliberately broken implementation, **after**
+  asserting that the unbroken one passes (a failing baseline makes every "caught" meaningless). Mutate the
+  code under test, not the test. A test that cannot fail is not a test; this found more than one vacuous one.
+- **Examples must run.** A recipe that is not run has already rotted. Keep `tests/test_recipes.py` green when
+  the library API changes, and assert on a recipe's own output, not on PyComex's banner (it varies by version).
+- **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
+  in one and every link and anchor. Every number in `docs/results.md` needs a source and its protocol.
 - **No network and no local data in unit tests.** Reference-split tests pass `download=False`.
-- **Never commit** checkpoints, datasets, experiment output, cluster names, job IDs or local paths.
+- **Never commit** checkpoints, datasets, experiment output, cluster names, job IDs, local paths, or the names
+  of sibling projects. `tests/test_no_private_references.py` fails if one appears in a shipped file.
+- **Dependency floors are tested**, not guessed: the suite passes with every dependency at its minimum on
+  Python 3.10. Change a floor only by running it.
 - Nothing is pushed or published (GitHub, TestPyPI, PyPI) without an explicit go-ahead.
-- Behaviour notes that matter: molecules must be kekulized (the aromatic bond class is lossy);
-  Feynman-Kac steering helps at low step counts only; adapter results were measured on a base that
-  had itself been RL fine-tuned.
+
+## Behaviour notes that matter
+
+- Molecules must be **kekulized**: the aromatic bond class is lossy (118 of 120 hard validity failures on the
+  aromatic MOSES base were kekulization errors).
+- A graph stores **no formal charge**: the property of a source SMILES and of the decoded graph differ by up to
+  1.6 logP. Every recorded result labelled by the decoded graph (`property_from="decoded"`), and the adapter, head
+  and size model must agree.
+- **Feynman-Kac `beta` is dimensionless only through `StandardisedEnergy`.** At `beta` 20 it is the largest lever
+  measured, at a cost in diversity; a starved `beta` (2.5) made it look useless. Read `FeynmanKacSampler.trace`.
+- **Do not read a re-packaged checkpoint's stored hyperparameters as its training configuration.** The adapter base
+  is weight-identical to the two-round RL model and carries the E1 recipe; its file stores defaults.
+- RL: `rollout_weight` must be the deployed guidance weight; one round for adapters; probe many fixed targets and
+  always compute the true property beside the selection metric.
+- Gains from RL and from Feynman-Kac do not add.

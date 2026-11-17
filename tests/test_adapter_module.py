@@ -4,8 +4,8 @@ This is the training path of every adapter in the package and it had no tests. W
 
 * the base is genuinely frozen and nothing but the adapter is optimised, so the shared
   unconditional path (and with it composability) survives training;
-* the adapter checkpoint does not drag the base's weights along (they are ~10x bigger and the base
-  is supplied separately at load time);
+* the adapter checkpoint does not drag the base's weights along (a second copy of the base is ballast,
+  and the base is supplied separately at load time);
 * the loss is the base's own, so a trained adapter is a conditional denoiser ``p(x1 | x_t, c)``,
   and it actually goes down when optimised.
 """
