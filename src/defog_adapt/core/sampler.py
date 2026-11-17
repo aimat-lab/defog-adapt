@@ -21,9 +21,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from torch_geometric.data import Batch
-
-from .data import PlaceHolder, dense_to_pyg, to_dense
+from .data import PlaceHolder, dense_to_pyg
 
 
 class Sampler:
@@ -51,7 +49,6 @@ class Sampler:
         sample_steps: Optional[int] = None,
         time_distortion: Optional[str] = None,
         guidance_scale: Optional[float] = None,
-        posterior_transform: Optional[Callable] = None,
     ):
         self.model = model
         self.eta = eta if eta is not None else model.eta
@@ -63,17 +60,9 @@ class Sampler:
         self.guidance_scale = (
             guidance_scale if guidance_scale is not None else model.guidance_scale
         )
-        # Generic per-step rectifier of the predicted marginals (external guidance
-        # rides on this; None -> unmodified, behavior-preserving for all callers).
-        self.posterior_transform = posterior_transform
         # Frozen-base adapter composition (product-of-experts CFG-adapters). Only
         # AdaptedSampler sets this; None -> byte-identical legacy denoise path.
         self.composition = None
-        # Schedule offset: the denoising loop runs steps ``start_step..sample_steps``.
-        # 0 (the default) is full generation from noise; a refinement sampler that
-        # seeds from a partially-noised guess sets this > 0 to skip the early,
-        # high-noise steps. Behavior-preserving for every existing caller.
-        self.start_step = 0
 
     # ------------------------------------------------------------------ hooks
     def _pre_step(self, X, E, t_norm, node_mask):
@@ -131,21 +120,18 @@ class Sampler:
             t_norm, s_norm, X, E, y, node_mask,
             guidance_scale=self.guidance_scale if use_cfg else None,
             eta=self.eta, omega=self.omega,
-            posterior_transform=self.posterior_transform,
             composition=self.composition,
         )
         return X, E, y
 
     def _run_loop(self, X, E, y, node_mask, use_cfg, show_progress, on_step=None):
-        """Monotone denoising loop t=start_step..sample_steps-1. Returns (X, E, y).
+        """Monotone denoising loop t=0..sample_steps-1. Returns (X, E, y).
 
         ``on_step(step, total, phase)`` (optional) is invoked once per OUTER step
         with a 1-based, monotonic step index — added for external progress
-        reporting; no behavior change when ``on_step`` is None. ``start_step`` is 0
-        for full generation; a refinement sampler sets it > 0 to denoise only the
-        tail of the schedule from a partially-noised guess.
+        reporting; no behavior change when ``on_step`` is None.
         """
-        iterator = range(self.start_step, self.sample_steps)
+        iterator = range(self.sample_steps)
         if show_progress:
             iterator = tqdm(iterator, desc=self._desc())
         for t_int in iterator:
@@ -373,179 +359,21 @@ class InpaintingSampler(Sampler):
         )
 
 
-class GuidedSampler(Sampler):
-    """
-    Exact posterior-based discrete guidance at sampling time.
-
-    Thin sugar over :class:`Sampler`: it wires a trained
-    :class:`~defog_adapt.core.guidance.ExactGuidance` in as the ``posterior_transform``
-    so every denoise step reweights the predicted clean-graph marginals toward the
-    guided target (one extra forward pass of the small guidance network per step).
-    Everything else -- rate matrix, eta/omega, time distortion, final MAP decode --
-    is inherited unchanged. Because the hook lives on the base ``Sampler``, guidance
-    also composes with inpainting via
-    ``InpaintingSampler(model, constraint, posterior_transform=guidance.reweight)``.
-    """
-
-    def __init__(self, model, guidance, **kwargs):
-        super().__init__(model, posterior_transform=guidance.reweight, **kwargs)
-        self.guidance = guidance
-
-    def _desc(self) -> str:
-        return "Guided sampling"
-
-
 class AdaptedSampler(Sampler):
     """Sampling under a frozen-base adapter composition (product-of-experts CFG).
 
-    Thin sugar over :class:`Sampler`, analogous to :class:`GuidedSampler`: it holds
-    an :class:`~defog_adapt.core.adapter.AdapterComposition` and threads it into every
+    Thin sugar over :class:`Sampler`: it holds an
+    :class:`~defog_adapt.core.adapter.AdapterComposition` and threads it into every
     ``denoise_step`` unconditionally (NOT gated by ``use_cfg``, which is always
     ``False`` for the ``cond_dim=0`` frozen bases this targets). Everything else --
-    eta/omega, time distortion, posterior_transform, size distribution -- is
-    inherited unchanged, so it also composes with inpainting/refinement.
+    eta/omega, time distortion, size distribution -- is inherited unchanged.
     """
 
     def __init__(self, model, composition, **kwargs):
         super().__init__(model, **kwargs)
         for br in composition.branches:
             br.adapter.check_compatible(model)   # fail fast on dim/n_layers/base mismatch
-        guide = getattr(composition, "guide", None)
-        if guide is not None:
-            # The autoguidance negative branch is loaded outside the package store, so it
-            # has not been through a downstream pipeline's compatibility gate. This is the only check
-            # it gets.
-            guide.adapter.check_compatible(model)
         self.composition = composition
 
     def _desc(self) -> str:
         return f"Adapted[{len(self.composition)}x,{self.composition.mode}]"
-
-
-class RefinementSampler(Sampler):
-    """
-    SDEdit-style refinement: seed the denoiser with a *guess* graph instead of
-    pure noise, so the model only walks it the last few steps onto its learned
-    (valid) data manifold -- "the last few meters toward validity".
-
-    Given rough guess graphs (e.g. from a deterministic first-guess algorithm),
-    each guess is treated as a clean graph ``x_1``, partially re-noised to level
-    ``t_start`` via the model's own forward interpolation ``p(x_tau | x_1=guess)``
-    (the SAME primitive RePaint time-travel uses -- ``_renoise_toward_current``),
-    then denoised over only the *tail* of the schedule (steps
-    ``start_step .. sample_steps-1``, where ``start_step = round(t_start *
-    sample_steps)``).
-
-    ``t_start`` in (0, 1) is the faithfulness<->validity knob (SDEdit's noise
-    ratio):
-
-    - near 1  -> inject little noise -> few steps -> stay close to the guess
-                 (light polish, keeps its structure and its remaining flaws);
-    - lower   -> inject more noise -> more steps -> more freedom to restructure
-                 (heavier repair, drifts further from the guess);
-    - -> 0    -> discards the guess; ~equivalent to full generation from noise.
-
-    The node *count* of each guess is preserved (this is refinement, not the
-    node-growing inpainting -- use :class:`InpaintingSampler` to add nodes around
-    a frozen core). Node types and edges are both free to change.
-
-    Because the reverse process is a stochastic CTMC, each call refines the same
-    guess differently -- draw several and keep the best under your own validity
-    check (a cheap ensemble of repairs). Composes with target guidance (``omega``),
-    stochasticity (``eta``), and per-step guidance (``posterior_transform``) as
-    usual; all inherited.
-
-    Guess format: a list of PyG ``Data`` with one-hot ``x`` of width
-    ``num_node_classes`` and one-hot ``edge_attr`` of width ``num_edge_classes``
-    (exactly what the model emits and what ``dense_to_pyg`` produces), undirected
-    (both directions in ``edge_index``). Each guess must have <= ``max_nodes``.
-    """
-
-    def __init__(self, model, *, t_start: float = 0.7, **kwargs):
-        super().__init__(model, **kwargs)
-        if not (0.0 < t_start < 1.0):
-            raise ValueError(f"t_start must be in (0, 1); got {t_start}")
-        self.t_start = float(t_start)
-        # High trust -> start late in the schedule -> denoise few steps. Clamp to
-        # [1, sample_steps-1]: always run >=1 step, and never step 0 (whose t=0
-        # absorbing-noise nudge would desync from the seeded noise level).
-        k = round(self.t_start * self.sample_steps)
-        self.start_step = int(min(max(k, 1), self.sample_steps - 1))
-
-    def _desc(self) -> str:
-        return "Refining"
-
-    def _encode_guesses(self, guesses, device):
-        """List of PyG ``Data`` guesses -> dense one-hot ``(X, E, node_mask,
-        n_nodes)`` in the model's class space. Validates class widths and sizes."""
-        if not isinstance(guesses, (list, tuple)) or len(guesses) == 0:
-            raise TypeError("guesses must be a non-empty list of PyG Data objects")
-        batch = Batch.from_data_list(list(guesses)).to(device)
-        dense, node_mask = to_dense(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
-        X, E = dense.X.float(), dense.E.float()
-
-        dx, de = self.model.num_node_classes, self.model.num_edge_classes
-        if X.shape[-1] != dx:
-            raise ValueError(
-                f"guess node features have {X.shape[-1]} classes but the model "
-                f"expects num_node_classes={dx} (one-hot). Encode guesses in the "
-                f"model's class space."
-            )
-        if E.shape[-1] != de:
-            raise ValueError(
-                f"guess edge features have {E.shape[-1]} classes but the model "
-                f"expects num_edge_classes={de} (one-hot, incl. the no-edge class)."
-            )
-        n_nodes = node_mask.sum(-1).long()
-        if int(n_nodes.max().item()) > self.model.max_nodes:
-            raise ValueError(
-                f"a guess has {int(n_nodes.max().item())} nodes, exceeding the "
-                f"model's max_nodes={self.model.max_nodes}."
-            )
-        return X, E, node_mask, n_nodes
-
-    @torch.no_grad()
-    def refine(
-        self,
-        guesses,
-        condition: Optional[torch.Tensor] = None,
-        device: Optional[torch.device] = None,
-        show_progress: bool = True,
-        on_step: Optional[Callable] = None,
-    ):
-        """Refine ``guesses`` (list of PyG ``Data``) toward the model's manifold.
-
-        Returns a list of refined PyG ``Data``, one per guess, each with the same
-        node count as its guess. ``condition`` (shape ``(len(guesses), cond_dim)``)
-        is used for conditional models exactly as in ``model.sample``.
-        """
-        model = self.model
-
-        # Force eval mode so dropout is inert during denoising; restore on exit.
-        was_training = model.training
-        model.eval()
-        device = device if device is not None else model.device
-
-        # Guess graphs -> dense one-hot seed state.
-        X1, E1, node_mask, n_nodes = self._encode_guesses(guesses, device)
-        bs = X1.shape[0]
-
-        # Partially re-noise the guess to the start-step noise level:
-        # p(x_tau | x_1 = guess). tau matches what step `start_step` assumes.
-        tau = self._distorted_time(self.start_step)
-        X, E = self._renoise_toward_current(X1, E1, tau, node_mask, model.limit_dist)
-
-        # Conditioning (shared with the noise-seeded generation path).
-        y, y_raw, use_cfg = model._prepare_condition(
-            bs, condition, self.guidance_scale, device
-        )
-
-        X, E, y = self._run_loop(X, E, y, node_mask, use_cfg, show_progress, on_step=on_step)
-        X, E = self._post_loop(X, E, node_mask)
-
-        X, E, _ = model.limit_dist.ignore_virtual_classes(X, E)
-        samples = dense_to_pyg(X, E, y_raw, node_mask, n_nodes)
-
-        if was_training:
-            model.train()
-        return samples

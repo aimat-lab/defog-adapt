@@ -23,7 +23,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch_geometric.data import Data, Batch
 from tqdm import tqdm
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from .data import PlaceHolder, to_dense, dense_to_pyg, DistributionNodes
 from .size_distribution import (
@@ -581,7 +581,6 @@ class DeFoGModel(pl.LightningModule):
         condition: Optional[torch.Tensor] = None,
         guidance_scale: Optional[float] = None,
         size_dist: Optional[SizeDistribution] = None,
-        posterior_transform: Optional[Callable] = None,
     ) -> List[Data]:
         """
         Generate graph samples.
@@ -631,7 +630,6 @@ class DeFoGModel(pl.LightningModule):
             sample_steps=sample_steps,
             time_distortion=time_distortion,
             guidance_scale=guidance_scale,
-            posterior_transform=posterior_transform,
         )
         return sampler.sample(
             num_samples,
@@ -791,7 +789,6 @@ class DeFoGModel(pl.LightningModule):
         guidance_scale: Optional[float] = None,
         eta: Optional[float] = None,
         omega: Optional[float] = None,
-        posterior_transform: Optional[Callable] = None,
         composition=None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -817,12 +814,6 @@ class DeFoGModel(pl.LightningModule):
                 current value is left untouched.
             omega: Target-guidance strength for this step. If None, the designer's
                 current value is left untouched.
-            posterior_transform: Optional callable
-                ``(pred_X, pred_E, noisy_data, node_mask) -> (pred_X, pred_E)``
-                applied to the predicted clean-graph marginals *before* the rate
-                matrix is built. This is the generic extension point external
-                guidance rides on (e.g. exact posterior-based discrete guidance):
-                the model itself stays guidance-agnostic. ``None`` is a no-op.
 
         Returns:
             Tuple of (X_s, E_s, y_s) for next state
@@ -851,7 +842,7 @@ class DeFoGModel(pl.LightningModule):
                 "cannot both be set in one denoise_step (v1 scope)."
             )
             return self._denoise_step_composed(
-                t, s, X_t, E_t, y_t, node_mask, composition, posterior_transform
+                t, s, X_t, E_t, y_t, node_mask, composition
             )
 
         # Create noisy data dict
@@ -870,12 +861,6 @@ class DeFoGModel(pl.LightningModule):
         # Normalize predictions
         pred_X = F.softmax(pred.X, dim=-1)
         pred_E = F.softmax(pred.E, dim=-1)
-
-        # Guidance hook: rectify the predicted clean-graph marginals before they
-        # drive the CTMC. Reassigning pred_X/pred_E in place means both the rate
-        # matrix below AND the final-step MAP decode use the rectified marginals.
-        if posterior_transform is not None:
-            pred_X, pred_E = posterior_transform(pred_X, pred_E, noisy_data, node_mask)
 
         # Compute conditional rate matrices
         R_t_X, R_t_E = self.rate_matrix_designer.compute_rate_matrices(
@@ -899,15 +884,6 @@ class DeFoGModel(pl.LightningModule):
 
             pred_X_uncond = F.softmax(pred_uncond.X, dim=-1)
             pred_E_uncond = F.softmax(pred_uncond.E, dim=-1)
-
-            # Apply the same guidance rectification to the unconditional branch so
-            # both rate matrices are built from consistently tilted posteriors.
-            # (Stacking exact guidance on top of CFG is a heuristic, not covered
-            # by the guidance theorem's exactness -- matching CFG's own status.)
-            if posterior_transform is not None:
-                pred_X_uncond, pred_E_uncond = posterior_transform(
-                    pred_X_uncond, pred_E_uncond, noisy_data_uncond, node_mask
-                )
 
             R_t_X_uncond, R_t_E_uncond = self.rate_matrix_designer.compute_rate_matrices(
                 t, node_mask, X_t, E_t, pred_X_uncond, pred_E_uncond
@@ -953,8 +929,7 @@ class DeFoGModel(pl.LightningModule):
         return masked.X, masked.E, y_t
 
     @torch.no_grad()
-    def _denoise_step_composed(self, t, s, X_t, E_t, y_t, node_mask, composition,
-                               posterior_transform=None):
+    def _denoise_step_composed(self, t, s, X_t, E_t, y_t, node_mask, composition):
         """One CTMC denoise step under an N-branch adapter composition (product-of-
         experts). Runs a SINGLE batched (N+1)*bs forward (group 0 = the frozen-base
         unconditional bypass; groups 1..N = each adapter's modulation), blends the
@@ -986,12 +961,6 @@ class DeFoGModel(pl.LightningModule):
         pred = self.forward(nd, extra_b, nd["node_mask"], cond_modulation=mod)
         pX = F.softmax(pred.X, dim=-1).view(rep, bs, *pred.X.shape[1:])
         pE = F.softmax(pred.E, dim=-1).view(rep, bs, *pred.E.shape[1:])
-
-        # optional per-branch posterior_transform (keeps exact-guidance stacking)
-        if posterior_transform is not None:
-            gnd = {"X_t": X_t, "E_t": E_t, "y_t": y_t, "t": t, "node_mask": node_mask}
-            for g in range(rep):
-                pX[g], pE[g] = posterior_transform(pX[g], pE[g], gnd, node_mask)
 
         w = composition.weights(device, dtype=pX.dtype)
 

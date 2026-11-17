@@ -3,23 +3,19 @@ Feynman-Kac / Sequential-Monte-Carlo steering for DeFoG (training-free).
 
 Implements inference-time, reward-tilted sampling in the spirit of
 *Discrete Feynman-Kac Correctors* (arXiv:2601.10403) and Feynman-Kac steering:
-run a population of ``K`` particles through the (optionally guided) denoising
-process, score each particle by a **potential** derived from an external reward,
-and periodically **resample** (kill low-weight particles, clone high-weight ones).
+run a population of ``K`` particles through the denoising process (the frozen model's own
+dynamics, or an adapter composition as the proposal), score each particle by a **potential**
+derived from an external reward, and periodically **resample** (kill low-weight particles,
+clone high-weight ones).
 
-Unlike single-trajectory guidance (``GuidedSampler``), the resampling acts on
-whole trajectories, so the ensemble self-corrects globally: a particle that
-happens to be heading toward the target "takes over", which attacks both failure
-modes of plug-in guidance (undershoot / within-mode reward-hacking, and
-mode-selection). No training or fine-tuning; the reward is evaluated on each
-particle's *predicted clean* graph.
-
-Two proposal modes:
-  * base proposal (``proposal_transform=None``): the frozen model's own dynamics;
-    the potential+resampling implement (approximate) reward-tilted sampling.
-  * guided proposal (pass an ``ExactGuidance.reweight``): the learned guidance
-    proposes target-ish molecules and the FK resampling concentrates them further
-    (a stronger, heuristic search -- not an exact importance sampler).
+Because the resampling acts on whole trajectories, the ensemble self-corrects globally: a
+particle that happens to be heading toward the target "takes over", which attacks both
+failure modes of plug-in guidance (undershoot / within-mode reward-hacking, and
+mode-selection). No training or fine-tuning; the reward is evaluated on each particle's
+*predicted clean* graph. The potential plus resampling implement (approximate) reward-tilted
+sampling; with an adapter composition as the proposal, the adapter proposes target-ish
+molecules and the resampling concentrates them further (a stronger, heuristic search, not an
+exact importance sampler).
 
 Cost: ``K`` forward passes per step (the batch) + one extra forward per particle
 at each resample checkpoint (to predict the clean graph for the reward), + reward
@@ -177,8 +173,6 @@ class FeynmanKacSampler(Sampler):
             collapses the sizes toward small "reliable" molecules. Resample only
             LATE (default 0.7; 0.8+ is tighter), once predictions are valid and
             shaped, so selection reflects final quality, not transient states.
-        proposal_transform: optional ``posterior_transform`` (e.g. a trained
-            ``ExactGuidance.reweight``) to use guided dynamics as the proposal.
         ess_frac: if set, only resample when the effective sample size drops below
             ``ess_frac * K`` (adaptive resampling; preserves diversity). If None,
             resample at every checkpoint.
@@ -186,19 +180,16 @@ class FeynmanKacSampler(Sampler):
 
     def __init__(self, model, energy_fn: Callable, *, beta=1.0,
                  resample_interval: Optional[int] = None, warmup_frac: float = 0.7,
-                 proposal_transform: Optional[Callable] = None,
-                 ess_frac: Optional[float] = None, rejuvenate: bool = False,
-                 jump_length: Optional[int] = None,
+                 ess_frac: Optional[float] = None,
                  resample_scheme: str = "residual", constraint=None,
                  n_free: Optional[int] = None, composition=None, **kwargs):
-        super().__init__(model, posterior_transform=proposal_transform, **kwargs)
+        super().__init__(model, **kwargs)
         self.energy_fn = energy_fn
         # Optional AdapterComposition as the PROPOSAL: the frozen-base dynamics are
         # conditioned by the adapter(s) -- the inherited Sampler._advance threads
         # self.composition into denoise_step -- while FK reward-tilts + resamples on
         # top. The FK energy is scored on the ADAPTER-conditioned predicted-clean graph
         # (target-aware), so "FK refinement over adapter conditioning" works end-to-end.
-        # composition and proposal_transform are independent (different denoise args).
         if composition is not None:
             self.composition = composition
         # `beta` may be a number or a schedule spec (see make_beta_schedule). `self.beta`
@@ -227,31 +218,12 @@ class FeynmanKacSampler(Sampler):
         # reward is evaluated on the whole (core + grown) molecule.
         self.constraint = constraint
         self.n_free = n_free
-        # resample-move: after resampling, jump back `jump_length` steps and
-        # re-noise/re-denoise so cloned (duplicated) particles diverge again --
-        # the standard SMC remedy for particle impoverishment / diversity collapse.
-        # IMPORTANT: the re-denoise re-steers only through the proposal, so
-        # rejuvenation must be paired with a GUIDED proposal (proposal_transform);
-        # on a bare base proposal it re-noises toward the base and washes out the
-        # reward tilt. Keep `jump_length` small (a few % of steps); too large a
-        # jump re-collapses under a strong proposal.
-        self.rejuvenate = rejuvenate
-        self.jump_length = jump_length
-        if rejuvenate and proposal_transform is None:
-            import warnings
-            warnings.warn(
-                "FeynmanKacSampler(rejuvenate=True) without a guided proposal_transform "
-                "will wash out the reward tilt (the re-denoise re-steers only via the "
-                "proposal). Pass proposal_transform=guidance.reweight.",
-                RuntimeWarning,
-            )
 
     def _desc(self) -> str:
-        tag = "+guided" if self.posterior_transform is not None else ""
+        tag = ""
         if getattr(self, "composition", None) is not None and len(self.composition) > 0:
             tag += "+adapter"
-        return "FK-SMC" + tag + ("+rejuv" if self.rejuvenate else "") + \
-            ("+inpaint" if self.constraint is not None else "")
+        return "FK-SMC" + tag + ("+inpaint" if self.constraint is not None else "")
 
     # inpainting hooks (no-ops when no constraint): project the frozen core each
     # step (at the current noise level) and install the exact core at the end.
@@ -264,43 +236,6 @@ class FeynmanKacSampler(Sampler):
         if self.constraint is not None:
             return self.constraint.project(X, E, 1.0, node_mask, self.model.limit_dist)
         return X, E
-
-    def _jump_back_time(self, t_back_int):
-        """Distorted normalized time (scalar) for integer step ``t_back_int``."""
-        model = self.model
-        t_norm = t_back_int / self.sample_steps
-        if model.limit_dist.noise_type == "absorbing" and t_back_int == 0:
-            t_norm = t_norm + 1e-6
-        t_norm = model.time_distorter.sample_ft(
-            torch.tensor([[t_norm]], dtype=torch.float32), self.time_distortion
-        )
-        return float(t_norm.reshape(-1)[0].item())
-
-    @torch.no_grad()
-    def _renoise_toward_current(self, X, E, tau, node_mask):
-        """Re-noise the whole graph toward its own current one-hot at level tau:
-        sample from tau*onehot(current) + (1-tau)*limit, INDEPENDENTLY per particle,
-        so cloned particles split. Edges sampled upper-triangular then mirrored."""
-        bs, n, dx = X.shape
-        de = E.shape[-1]
-        device = X.device
-        limX = self.model.limit_dist.X.to(device).float()
-        limE = self.model.limit_dist.E.to(device).float()
-
-        probX = tau * X + (1.0 - tau) * limX.view(1, 1, dx)
-        idxX = probX.clamp_min(0).reshape(bs * n, dx).multinomial(1).reshape(bs, n)
-        Xn = F.one_hot(idxX, dx).float()
-
-        probE = tau * E + (1.0 - tau) * limE.view(1, 1, 1, de)
-        idxE = probE.clamp_min(0).reshape(bs * n * n, de).multinomial(1).reshape(bs, n, n)
-        iu = torch.triu(torch.ones(n, n, device=device), diagonal=1).bool()
-        idxE_sym = torch.zeros(bs, n, n, dtype=idxE.dtype, device=device)
-        idxE_sym[:, iu] = idxE[:, iu]
-        idxE_sym = idxE_sym + idxE_sym.transpose(1, 2)
-        En = F.one_hot(idxE_sym.long(), de).float()
-
-        masked = PlaceHolder(X=Xn, E=En, y=None).mask(node_mask)
-        return masked.X, masked.E
 
     @torch.no_grad()
     def _predict_clean(self, X, E, y, t_norm, node_mask):
@@ -445,21 +380,6 @@ class FeynmanKacSampler(Sampler):
                 logw = torch.zeros(K, device=device)
                 if on_step is not None:
                     on_step(t_int + 1, self.sample_steps, "fk_resample")
-
-                # resample-move: split cloned particles by jumping back and
-                # re-noising/re-denoising, so the ensemble regains diversity.
-                if self.rejuvenate:
-                    j = self.jump_length or max(1, self.sample_steps // 25)
-                    t_back = max(0, t_int + 1 - j)
-                    tau = self._jump_back_time(t_back)
-                    X, E = self._renoise_toward_current(X, E, tau, node_mask)
-                    for tt in range(t_back, t_int + 1):
-                        X, E, y = self._advance(tt, X, E, y, node_mask, use_cfg)
-                        if on_step is not None:
-                            on_step(t_int + 1, self.sample_steps, "fk_rejuvenate")
-                    # particles changed -> refresh the telescoping reference
-                    t_now = ((t_int + 1) / self.sample_steps) * torch.ones(K, 1, device=device)
-                    prev_phi = self._potential(X, E, y, t_now, node_mask)
 
         # install the exact core (inpainting) after the loop; no-op otherwise
         X, E = self._post_loop(X, E, node_mask)

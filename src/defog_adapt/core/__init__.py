@@ -71,7 +71,7 @@ from .size_distribution import (
     ComposedSizeDistribution,
 )
 from .rate_matrix import RateMatrixDesigner
-from .sampler import Sampler, InpaintingSampler, GuidedSampler, RefinementSampler, AdaptedSampler
+from .sampler import Sampler, InpaintingSampler, AdaptedSampler
 from .adapter import (
     Modulation,
     AdaLNAdapter,
@@ -152,7 +152,6 @@ __all__ = [
     # Sampling orchestration
     "Sampler",
     "InpaintingSampler",
-    "GuidedSampler",
     "AdaptedSampler",
     "Modulation",
     "AdaLNAdapter",
@@ -161,7 +160,6 @@ __all__ = [
     "ConditionBranch",
     "AdapterComposition",
     "AdapterModule",
-    "RefinementSampler",
     # Constraints (inpainting)
     "Constraint",
     "SubgraphConstraint",
