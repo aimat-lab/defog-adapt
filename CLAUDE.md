@@ -53,6 +53,18 @@ recipes need PyComex, which caps `numpy<2`, so run them in an environment built 
   Python 3.10. Change a floor only by running it.
 - Nothing is pushed or published (GitHub, TestPyPI, PyPI) without an explicit go-ahead.
 
+## Releasing
+
+Nothing publishes by accident: the workflow in `.github/workflows/release.yml` needs a `v*` tag for the real index
+and uses PyPI **Trusted Publishing** (no API token exists). One-time setup, on the maintainer's side:
+
+1. On PyPI and TestPyPI, add a *trusted publisher* for the project `defog-adapt`: owner and repository of the GitHub
+   remote, workflow `release.yml`, environments `pypi` and `testpypi` respectively.
+2. In the GitHub repository settings, create the environments `testpypi` and `pypi` and give each a required reviewer.
+3. To release: set `version` in `pyproject.toml` (and `CITATION.cff`), move the changelog entry out of "unreleased",
+   run the gates (unit suite, floors, parity, `tests/test_recipes.py`), push, run the workflow manually (TestPyPI
+   only), check the upload, then push the `v<version>` tag.
+
 ## Behaviour notes that matter
 
 - Molecules must be **kekulized**: the aromatic bond class is lossy (118 of 120 hard validity failures on the

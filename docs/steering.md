@@ -134,14 +134,16 @@ from defog_adapt.domains import MoleculeDomain
 domain = MoleculeDomain(atom_types, bond_decoder)
 X, E = domain.encode("c1ccccc1")          # an aromatic SMILES is encoded in Kekule form for a kekulized model
 print(domain.core_valence_report(X, E))   # check FIRST: a core with no free valence completes ~0% valid
-sampler = InpaintingSampler(base, SubgraphConstraint(X, E), sample_steps=250, eta=50, omega=0.3,
-                            time_distortion="polydec", resample=True, n_resample=4, jump_length=5)
+sampler = InpaintingSampler(base, SubgraphConstraint(X, E), sample_steps=250, eta=50, omega=0.3,   # the recorded
+                            time_distortion="polydec", resample=True, n_resample=4)                      # demonstration
 graphs = sampler.sample(8, n_free=8)
 ```
 
 `mode="clamp"` instead of the default `"repaint"` holds the core fixed at every step rather than re-noising it.
-`resample=True` adds time travel (re-noise a window and denoise it again, `n_resample` times). A core plus
-`n_free` that exceeds the model's `max_nodes` is refused. The evidence for this feature is thin: see
+`resample=True` adds RePaint's time travel: it periodically jumps back to a noisier time (`jump_length`, by
+default about 10% of the steps, every `jump_interval` steps) and re-denoises, `n_resample` times per jump point,
+giving the free region repeated chances to harmonise with the core at the boundary. It costs extra forward passes
+and helps mainly on hard cores. A core plus `n_free` that exceeds the model's `max_nodes` is refused. The evidence for this feature is thin: see
 [caveats.md](caveats.md#features-with-thin-evidence).
 
 ## A spectral energy
