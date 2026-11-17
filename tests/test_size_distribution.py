@@ -13,7 +13,6 @@ from defog_adapt.core import (
     EmpiricalSizeDistribution,
     FixedSizeDistribution,
     ExplicitSizeDistribution,
-    UniformSizeDistribution,
     CategoricalSizeDistribution,
     ConditionalSizeDistribution,
     LearnedSizeDistribution,
@@ -79,18 +78,6 @@ class TestExplicitSizeDistribution:
         d = ExplicitSizeDistribution([3, 5, 7])
         with pytest.raises(AssertionError):
             d.sample(4)
-
-
-class TestUniformSizeDistribution:
-    def test_within_range(self):
-        d = UniformSizeDistribution(4, 9)
-        s = d.sample(500)
-        assert s.min() >= 4 and s.max() <= 9
-        assert d.max_size == 9
-
-    def test_rejects_bad_range(self):
-        with pytest.raises(AssertionError):
-            UniformSizeDistribution(5, 3)
 
 
 class TestCategoricalSizeDistribution:
@@ -330,9 +317,16 @@ class TestLearnedSizeDistribution:
         with pytest.raises(AssertionError, match="width-1 condition"):
             m.check_compatible(wide)
 
-    def test_encoder_slot_is_declared_but_unwired(self):
-        assert "cond_encoder" in _model().config()
-        with pytest.raises(NotImplementedError):
+    def test_a_config_from_the_research_package_still_loads(self):
+        """Size models saved by the research package carry a reserved ``cond_encoder: None``.
+        The slot is not part of this package, but such a config has to load, and no config
+        written here carries it."""
+        m = _model()
+        assert "cond_encoder" not in m.config()
+        old_cfg = dict(m.config(), cond_encoder=None)
+        back = LearnedSizeDistribution.from_config(old_cfg, m.state_dict())
+        assert back.config() == m.config()
+        with pytest.raises(TypeError):
             LearnedSizeDistribution(1, 5, 15, cond_encoder=torch.nn.Identity())
 
 

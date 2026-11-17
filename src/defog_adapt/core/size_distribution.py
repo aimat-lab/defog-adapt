@@ -9,7 +9,6 @@ from a :class:`SizeDistribution`. This can be:
   training set (the historical default).
 - :class:`FixedSizeDistribution` -- a single fixed size for every graph.
 - :class:`ExplicitSizeDistribution` -- an explicit per-sample list of sizes.
-- :class:`UniformSizeDistribution` -- uniform over a user-specified range.
 - :class:`CategoricalSizeDistribution` -- an arbitrary user-specified pmf.
 - :class:`ConditionalSizeDistribution` -- ``P(n | c)`` estimated non-parametrically
   from training ``(condition, size)`` pairs, so that size-correlated properties
@@ -142,29 +141,6 @@ class ExplicitSizeDistribution(SizeDistribution):
     @property
     def max_size(self) -> int:
         return int(self.sizes.max())
-
-
-class UniformSizeDistribution(SizeDistribution):
-    """Uniform over the integer range ``[min_size, max_size]`` (inclusive)."""
-
-    def __init__(self, min_size: int, max_size: int):
-        assert 1 <= min_size <= max_size, "require 1 <= min_size <= max_size"
-        self.min_size = int(min_size)
-        self._max_size = int(max_size)
-
-    def sample(self, num_samples, condition=None, device=None, generator=None):
-        return torch.randint(
-            self.min_size,
-            self._max_size + 1,
-            (num_samples,),
-            dtype=torch.long,
-            device=device,
-            generator=generator,
-        )
-
-    @property
-    def max_size(self) -> int:
-        return self._max_size
 
 
 class CategoricalSizeDistribution(SizeDistribution):
@@ -403,9 +379,6 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
             product-of-experts anchor, and the baseline the fitter scores against.
             Defaults to uniform, which makes every size "supported"; pass the real
             training histogram in anything but a unit test.
-        cond_encoder: Reserved for wide conditions (fingerprints, spectra). Declared in
-            the config format now so adding one later needs no package migration; no
-            encoder is wired in this version.
         property_name, property_from: Provenance. ``property_from`` records the label
             convention ("decoded" / "source") the model was fit under -- a size model fit
             on source labels and paired with an adapter conditioned on decoded ones will
@@ -422,7 +395,6 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
         cond_mean=None,
         cond_std=None,
         marginal=None,
-        cond_encoder: Optional[nn.Module] = None,
         property_name: str = "",
         property_from: str = "",
     ):
@@ -437,13 +409,6 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
         self.layers = int(layers)
         self.property_name = property_name
         self.property_from = property_from
-
-        if cond_encoder is not None:
-            raise NotImplementedError(
-                "cond_encoder is a reserved config slot; no encoder is wired in this "
-                "version. Scalar-property conditions only."
-            )
-        self.cond_encoder = None
 
         n_bins = self._max_size - self._min_size + 1
         net: List[nn.Module] = []
@@ -593,7 +558,6 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
         return {
             "cond_dim": self.cond_dim, "min_size": self._min_size,
             "max_size": self._max_size, "hidden": self.hidden, "layers": self.layers,
-            "cond_encoder": None,
             "property_name": self.property_name, "property_from": self.property_from,
         }
 

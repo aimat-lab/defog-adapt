@@ -63,7 +63,6 @@ from .size_distribution import (
     EmpiricalSizeDistribution,
     FixedSizeDistribution,
     ExplicitSizeDistribution,
-    UniformSizeDistribution,
     CategoricalSizeDistribution,
     ConditionalSizeDistribution,
     LearnedSizeDistribution,
@@ -84,7 +83,7 @@ from .adapter import (
 from .constraint import Constraint, SubgraphConstraint
 from .energy import MoleculePropertyEnergy
 from .feynman_kac import FeynmanKacSampler, predict_clean
-from .property_head import PropertyHead, LearnedPropertyEnergy, fit_property_head
+from .property_head import PropertyHead, LearnedPropertyEnergy, fit_property_head, fit_size_model
 from .spectrum import Band, SpectrumEnergy, band_masses
 from .rl import (
     RLTrainerBase,
@@ -136,7 +135,6 @@ __all__ = [
     "EmpiricalSizeDistribution",
     "FixedSizeDistribution",
     "ExplicitSizeDistribution",
-    "UniformSizeDistribution",
     "CategoricalSizeDistribution",
     "ConditionalSizeDistribution",
     "LearnedSizeDistribution",
@@ -166,6 +164,7 @@ __all__ = [
     "MoleculePropertyEnergy",
     "PropertyHead",
     "fit_property_head",
+    "fit_size_model",
     "LearnedPropertyEnergy",
     "FeynmanKacSampler",
     "predict_clean",
