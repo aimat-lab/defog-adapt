@@ -137,3 +137,24 @@ def test_the_sampling_and_training_presets_pin_the_recorded_values():
     assert ADAPTER_ARCHITECTURE == dict(hidden=256, time_conditioned=True, streams=("X", "E", "y"),
                                         cond_fourier=3, xattn_tokens=64, xattn_dim=128,
                                         xattn_heads=16)
+
+
+def test_the_adapter_base_is_the_rl_model_and_its_stored_hyperparameters_are_not_its_recipe():
+    """Opt-in. The checkpoint every adapter result was trained against is weight-identical to the
+    RL fine-tune of an E1-recipe base (so the adapters sat on the E1 lineage), but the file was
+    re-packaged and its stored hyperparameters (edge-loss weight 1, identity distortion, 100 steps) are
+    defaults filled in at export. Reading them as the training configuration is a mistake that was made
+    once while writing the documentation; this pins both halves of the fact."""
+    root = os.environ.get("DEFOG_ADAPT_CKPTS")
+    paths = [Path(root) / n for n in ("zinc_kek_base.ckpt", "zinc_rl2_seed42/best_model.ckpt")] if root else []
+    if not paths or not all(p.exists() for p in paths):
+        pytest.skip("set DEFOG_ADAPT_CKPTS to a directory with zinc_kek_base.ckpt and "
+                    "zinc_rl2_seed42/best_model.ckpt")
+    base, rl = (torch.load(p, map_location="cpu", weights_only=False) for p in paths)
+    assert set(base["state_dict"]) == set(rl["state_dict"])
+    assert all(torch.equal(base["state_dict"][k], rl["state_dict"][k]) for k in rl["state_dict"]), \
+        "the adapter base must be the RL model, tensor for tensor"
+    for key, want in E1_MODEL.items():
+        assert rl["hyper_parameters"][key] == want, f"the RL model should carry E1_MODEL: {key}"
+    assert base["hyper_parameters"]["lambda_edge"] != E1_MODEL["lambda_edge"], \
+        "the re-packaged file's stored hyperparameters are defaults, not the recipe"

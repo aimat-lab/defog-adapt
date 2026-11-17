@@ -19,10 +19,12 @@ Dataset-specific values are not in the preset: the atom valencies and weights
     model = DeFoGModel.from_dataloader(loader, **E1_MODEL,
                                        atom_valencies=..., atom_weights=..., max_atom_weight=...)
 
-A caveat that matters for the adapter results: they were measured on a ZINC base that was trained
-under an EARLIER configuration (edge-loss weight 1, identity time distortion, no LR schedule) and
-then fine-tuned with reinforcement learning, not on a base trained with this recipe. There is no
-recorded adapter run on an E1-recipe base.
+The adapters were measured on this lineage: an E1-recipe base, then two rounds of structural RL
+(``examples/rl_sanity__zinc.py``). One trap when reading the checkpoint they were trained against: it was
+re-packaged, so the hyperparameters stored in the file (identity time distortion, edge-loss weight 1, 100
+sampling steps) are defaults filled in at export, not its training configuration; its weights are identical,
+tensor for tensor, to the RL model, which carries ``E1_MODEL``. Do not rely on a loaded model's stored
+sampling defaults: pass the sampling arguments explicitly, as every recipe here does.
 """
 
 #: Model and optimiser settings behind the recorded unconditional results.
