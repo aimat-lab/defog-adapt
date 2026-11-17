@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 
 
 def _num_nodes(data) -> int:
@@ -56,8 +56,9 @@ def _node_classes(data):
 def _cmap(name: str):
     try:
         return matplotlib.colormaps[name]
-    except Exception:  # older matplotlib
-        return plt.get_cmap(name)
+    except Exception:  # matplotlib < 3.5 has no colormap registry
+        from matplotlib import cm
+        return cm.get_cmap(name)
 
 
 class GraphDomain(ABC):
@@ -85,7 +86,7 @@ class GraphDomain(ABC):
 
     # --------------------------------------------------------------- visualize
     @abstractmethod
-    def render(self, ax: "plt.Axes", data) -> None:
+    def render(self, ax: "Axes", data) -> None:
         """Draw a single sampled graph onto ``ax``."""
 
     def caption(self, data) -> Optional[str]:

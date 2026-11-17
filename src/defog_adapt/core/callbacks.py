@@ -32,12 +32,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-import matplotlib
+# Figures are built with matplotlib's object-oriented API (``Figure``) and never through
+# pyplot. pyplot owns two global decisions -- the backend and a registry of open figures -- and
+# a library must not make either for its user: forcing a backend at import time breaks
+# interactive sessions, and a registry is what leaked a figure per epoch before.
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from .domain import GraphDomain, GenericGraphDomain
+from .domain import GraphDomain, GenericGraphDomain, _cmap
 
 
 # Module groups on the GraphTransformer (accessed via pl_module.model)
@@ -253,7 +255,7 @@ class TrainingMonitorCallback(pl.Callback):
         self._prev_params: Dict[str, torch.Tensor] = {}
         self._hw_monitor: Optional[_HardwareMonitor] = None
         self._epoch_start_time: float = 0.0
-        self.last_figure: Optional[plt.Figure] = None
+        self.last_figure: Optional[Figure] = None
 
     # ------------------------------------------------------------------
     # Checkpoint state (persist best-validity + history across resume)
@@ -661,10 +663,8 @@ class TrainingMonitorCallback(pl.Callback):
 
         if self.figure_callback is not None:
             self.figure_callback(fig)
-        # Always close the figure — even after handing it to figure_callback,
-        # which (via pycomex track()) has already saved it. Leaving it open pins
-        # it in pyplot's global registry every epoch -> monotonic RAM growth.
-        plt.close(fig)
+        # Nothing to close: no global registry holds a Figure, so it is freed once the
+        # references to it (``last_figure`` is replaced next epoch) are gone.
 
     def _collect_generation_metrics(self, pl_module: pl.LightningModule, epoch_idx: int):
         """Sample the model unconditionally and record validity/uniqueness/novelty."""
@@ -714,9 +714,10 @@ class TrainingMonitorCallback(pl.Callback):
     # Plotting
     # ------------------------------------------------------------------
 
-    def _generate_figure(self) -> plt.Figure:
+    def _generate_figure(self) -> Figure:
         n_rows = 6 if self.generation_metrics_fn is not None else 5
-        fig, axes = plt.subplots(n_rows, 4, figsize=(20, 5 * n_rows))
+        fig = Figure(figsize=(20, 5 * n_rows))
+        axes = fig.subplots(n_rows, 4)
         sw = self.smoothing_window
         epochs = list(range(1, len(self.history["epoch_time"]) + 1))
 
@@ -831,7 +832,7 @@ class TrainingMonitorCallback(pl.Callback):
 
     # ------ individual subplot helpers ------
 
-    def _plot_loss_linear(self, ax: plt.Axes, epochs: List[int], sw: int):
+    def _plot_loss_linear(self, ax: Axes, epochs: List[int], sw: int):
         ax.set_title("Train + Val Loss  (+ LR)")
         train = self.history.get("train_loss", [])
         val = self.history.get("val_loss", [])
@@ -858,7 +859,7 @@ class TrainingMonitorCallback(pl.Callback):
             ax2.tick_params(axis="y", labelcolor="C4", labelsize=8)
             ax2.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
 
-    def _plot_loss_log(self, ax: plt.Axes, epochs: List[int], sw: int):
+    def _plot_loss_log(self, ax: Axes, epochs: List[int], sw: int):
         ax.set_title("Train + Val Loss (log)")
         train = self.history.get("train_loss", [])
         val = self.history.get("val_loss", [])
@@ -875,7 +876,7 @@ class TrainingMonitorCallback(pl.Callback):
         ax.set_ylabel("Loss (log)")
         ax.legend(fontsize="small")
 
-    def _plot_loss_ratio(self, ax: plt.Axes, epochs: List[int], sw: int):
+    def _plot_loss_ratio(self, ax: Axes, epochs: List[int], sw: int):
         ax.set_title("Train / Val Loss Ratio")
         train = self.history.get("train_loss", [])
         val = self.history.get("val_loss", [])
@@ -889,7 +890,7 @@ class TrainingMonitorCallback(pl.Callback):
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Ratio")
 
-    def _plot_time_binned_loss(self, ax: plt.Axes, epochs: List[int], sw: int):
+    def _plot_time_binned_loss(self, ax: Axes, epochs: List[int], sw: int):
         """Train loss split into time bands: mean line + ±1 std funnel, with a
         dotted per-band Bayes-oracle reference.
 
@@ -946,7 +947,7 @@ class TrainingMonitorCallback(pl.Callback):
 
     def _plot_single_metric(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         epochs: List[int],
         key: str,
         title: str,
@@ -973,7 +974,7 @@ class TrainingMonitorCallback(pl.Callback):
 
     def _plot_multi_metric(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         epochs: List[int],
         keys: List[str],
         labels: List[str],
@@ -1002,7 +1003,7 @@ class TrainingMonitorCallback(pl.Callback):
 
     def _plot_per_class_accuracy(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         epochs: List[int],
         key: str,
         title: str,
@@ -1039,7 +1040,7 @@ class TrainingMonitorCallback(pl.Callback):
 # Default graph renderer (networkx spring layout)
 # ======================================================================
 
-def _default_render_graph(ax: plt.Axes, data) -> None:
+def _default_render_graph(ax: Axes, data) -> None:
     """
     Draw a PyG Data object on the given axes using networkx spring layout.
 
@@ -1078,7 +1079,7 @@ def _default_render_graph(ax: plt.Axes, data) -> None:
                 G.add_edge(u, v)
 
     # Node colors from class index
-    cmap = plt.cm.Set3
+    cmap = _cmap("Set3")
     if data.x.dim() == 2 and data.x.shape[1] > 1:
         node_classes = data.x.argmax(dim=-1).tolist()
     else:
@@ -1190,7 +1191,7 @@ class SampleVisualizationCallback(pl.Callback):
         self.show_progress = show_progress
 
         self._val_epoch_count = 0
-        self.last_figure: Optional[plt.Figure] = None
+        self.last_figure: Optional[Figure] = None
 
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
@@ -1237,9 +1238,8 @@ class SampleVisualizationCallback(pl.Callback):
         n = len(samples)
         ncols = min(4, n) if n > 0 else 1
         nrows = max(1, math.ceil(n / ncols))
-        fig, axes = plt.subplots(
-            nrows, ncols, figsize=(3.2 * ncols, 3.6 * nrows), squeeze=False
-        )
+        fig = Figure(figsize=(3.2 * ncols, 3.6 * nrows))
+        axes = fig.subplots(nrows, ncols, squeeze=False)
         flat_axes = axes.flatten()
 
         for idx, ax in enumerate(flat_axes):
@@ -1263,9 +1263,7 @@ class SampleVisualizationCallback(pl.Callback):
 
         if self.figure_callback is not None:
             self.figure_callback(fig)
-        # Always close (see TrainingMonitorCallback): track() has already saved
-        # the figure; leaving it open leaks it into pyplot's global registry.
-        plt.close(fig)
+        # Nothing to close (see TrainingMonitorCallback): no global registry holds a Figure.
 
 
 class EMACallback(pl.Callback):
