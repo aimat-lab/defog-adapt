@@ -96,6 +96,9 @@ Each row adds to the one above it, except the last two.
 Validity stays at 0.97 or above in the recorded runs. Feynman-Kac costs diversity (uniqueness about 0.76, against
 1.0 without it), and the RL gain does **not** add to it. Every number, its protocol and its uncertainty are in
 [`docs/results.md`](docs/results.md); what they do *not* support is in [`docs/caveats.md`](docs/caveats.md).
+A re-measurement with `examples/steer_zinc.py` on 40 real validation targets reproduced the Feynman-Kac effect
+(-0.082 against a recorded -0.083) at a different absolute level
+([`docs/results.md`](docs/results.md#8-re-measured-here)).
 
 ## Documentation
 

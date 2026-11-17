@@ -261,4 +261,34 @@ from this package.
 
 ## 8. Re-measured here
 
-*(Filled in below once the run in this repository has finished.)*
+Everything above is the research fork's. To check that the *assembly* in this repository, not just its
+parts, reproduces the central steering result, `examples/steer_zinc.py --evaluate` was run on logP with real
+checkpoints: the E1-lineage base, the 80-epoch cross-attention adapter, its head and its size model, at the
+recorded sampling configuration (500 steps, eta 25, polydec, guidance weight 1.5) and, for the Feynman-Kac
+arm, `beta` 20 with the `FK_STEERING` schedule and 10 particles. The three arms share **40 targets drawn from
+the validation split** (a seeded permutation, the first 40 whose property decodes) and a seed of 42, so the
+differences between them are paired.
+
+| arm | logP error | validity | uniqueness | recorded error (100 targets) |
+|---|---|---|---|---|
+| adapter, marginal sizes | 0.2747 | 0.985 | 1.000 | 0.3250 |
+| adapter, learned sizes | 0.2905 | 0.998 | 1.000 | 0.3132 |
+| adapter, learned sizes, **Feynman-Kac** | **0.2084** | 0.990 | 0.838 | 0.2299 |
+
+* **The Feynman-Kac effect reproduces closely.** Against the same arm without it the error fell by 0.0821
+  (-28.3%); the recorded value is -0.0833 (-26.6%). Validity stayed at 0.99, and uniqueness fell as the
+  diversity cost predicts (0.838 here against 0.764 recorded; this script pools uniqueness over all
+  generations, and the target sets differ).
+* **The absolute levels are lower than the recorded ones**, by 0.02 to 0.05. That is the target set: these are
+  a different and smaller sample of real molecules than the 100 the original harness used, and the
+  noise floor of a 100-target error (0.011) grows to roughly 0.017 at 40. It is a consistency check, not a
+  reproduction of the table.
+* **Learned against marginal sizes came out the other way** (+0.0158 here, -0.0127 recorded). Both are about
+  one noise floor and neither is significant; the recorded one was not either (p = 0.27). Do not read a size
+  effect for logP from either.
+* It is one seed, on one consumer GPU (about 50 minutes per arm), and checks only the logP path.
+
+```bash
+python examples/steer_zinc.py --base BASE --property logp --adapter ADAPTER --head HEAD \
+    --size SIZE --evaluate 40 --n 10 --steps 500 --eta 25 --seed 42 --method fk --beta 20
+```
