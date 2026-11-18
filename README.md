@@ -44,7 +44,7 @@ The shortest tour of every building block is a toy that runs on a CPU in tens of
 and no checkpoints ([`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)):
 
 ```bash
-git clone https://github.com/the16thpythonist/defog-adapt && cd defog-adapt
+git clone https://github.com/aimat-lab/defog-adapt && cd defog-adapt
 pip install -e ".[chem]" && python examples/quickstart_cpu.py
 ```
 

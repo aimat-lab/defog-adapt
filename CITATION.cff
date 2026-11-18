@@ -6,7 +6,7 @@ authors:
   - family-names: Teufel
     given-names: Jonas
 license: MIT
-repository-code: "https://github.com/the16thpythonist/defog-adapt"
+repository-code: "https://github.com/aimat-lab/defog-adapt"
 version: "0.1.0.dev0"
 references:
   - type: conference-paper

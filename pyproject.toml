@@ -61,8 +61,8 @@ dev = ["pytest>=7", "build", "twine"]
 all = ["defog-adapt[chem,data,monitor,recipes,dev]"]
 
 [project.urls]
-Homepage = "https://github.com/the16thpythonist/defog-adapt"
-Repository = "https://github.com/the16thpythonist/defog-adapt"
+Homepage = "https://github.com/aimat-lab/defog-adapt"
+Repository = "https://github.com/aimat-lab/defog-adapt"
 Upstream = "https://github.com/qym7/DeFoG"
 
 [tool.hatch.build.targets.wheel]
