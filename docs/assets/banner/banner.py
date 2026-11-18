@@ -7,6 +7,10 @@ the recorded sampler state, see record_trajectories.py); only the node POSITIONS
 graph has no coordinates: the noise is scattered and the final molecule uses an RDKit 2D layout, and the drawing
 glides from one to the other while the categories flip.
 
+A time axis under the stations runs from the noise (t = 0) to the sample (t = 1); its knob carries the flow time
+the model was given at the step on screen, and it rewinds when the noise comes back. The orange pulses at the
+adapter fire each time the counter passes a tick of the axis (every 0.1).
+
 This script draws ONE frame, chosen by $BANNER_FRAME; render_banner.py renders them all and assembles the GIF.
 
 Build one frame:  BANNER_FRAME=120 python3 ~/.claude/skills/figure/scripts/build.py banner.py --scale 4
@@ -18,12 +22,12 @@ from types import SimpleNamespace
 
 import numpy as np
 from figlib import *  # noqa: F401,F403
-from figlib import _svg_file
+from figlib import _svg_file, fonts
 from molecules import (assign_slots, draw_state, fit_layout, keep_apart, lerp_points, molecule_layout, pct,
                        scatter_layout)
 
 NAME = 'banner'
-SIZE = (468, 120)                  # about 4:1; the type sizes are those of the thesis figures (7 pt labels)
+SIZE = (468, 122)                  # about 4:1; the type sizes are those of the thesis figures (7 pt labels)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get('BANNER_DATA', os.path.join(HERE, 'trajectory.json'))
@@ -32,23 +36,23 @@ FRAME = int(os.environ.get('BANNER_FRAME', '120'))
 # ------------------------------------------------------------------------------ layout (pt)
 MID = 58                           # centre line of the stations
 LEFT = 14                          # left margin of the wordmark
-WM_BASE, TAG_BASE = 62, 80         # baselines: wordmark (30 pt) and tagline
+WM_SIZE, WM_BASE, TAG_BASE = 30, 61, 77          # wordmark size and baseline, tagline baseline
 X_NOISE, NOISE_W, NOISE_H = 212, 52, 48          # noise graph: centre and extent of its scatter
 X_MODEL, MW, MH, TAPER = 266, 60, 46, 0.38       # frozen DeFoG: left edge, width, height
 X_SAMPLE, SAMPLE_W, SAMPLE_H, BOND_MAX = 407, 76, 40, 11.0
-X_OUT = 352                        # where the arrow from the model ends
-LABEL = 100                        # baseline of the station labels and of the step counter
-CAPTION = 111                      # baseline of the logP caption under "Sample"
-LOOP_Y = MID + MH / 2 + 8          # the feedback loop under the model
-X_LOOP_OUT, X_LOOP_IN = X_MODEL + MW + 12, X_MODEL - 12
+X_OUT = 354                        # where the arrow from the model ends
+LABEL = 96                         # baseline of the station labels
+AXIS_Y, TICKS = 105.5, 10          # the time axis under the stations, and its ticks (every 0.1)
+T_BASE = 116                       # baseline of the t counter that rides under the knob
 ADAPTER_X = X_MODEL + 0.36 * MW    # where the adapter docks, along the model's top edge
 ADAPTER_W, ADAPTER_H, DOCK_GAP = 26, 17, 5
 
 FROST, FROST_SW, FROST_GAP = '#b9dcff', 2.0, 5.0       # light blue stripes: frozen weights (as in the visual abstract)
+ICE_D = '#2275c9'                  # the frozen model's blue, deeper than the pale stripes so that a snowflake can be seen
 ADAPTER_FILL = tint(ORANGE, 0.78)                      # the trained adapter's colour (flame)
+TRACK, TICK_OFF = '#dcdcdc', '#c4c4c4'                 # the time axis before the knob has passed
 
 # ------------------------------------------------------------------------------ timeline (15 fps)
-PERIOD = 10                                            # frames per round of the feedback loop (one model application)
 N_DEN = 50                                             # frames of visible denoising per beat
 T_INTRO, T_HOLD1, T_SWAP, T_HOLD2, T_RESET = 8, 22, 22, 28, 14
 B_BEAT1 = T_INTRO
@@ -58,6 +62,8 @@ B_BEAT2 = B_SWAP + T_SWAP
 B_HOLD2 = B_BEAT2 + N_DEN
 B_RESET = B_HOLD2 + T_HOLD2
 FRAMES = B_RESET + T_RESET
+REWIND = (3, 12)                                       # frames (after a result is hidden) over which the knob rewinds
+PULSE_LIFE = 8                                         # frames a pulse lives
 
 
 def smooth(k):
@@ -141,9 +147,66 @@ def load():
     return d, atom_types, noise_pos, finals
 
 
+def counter_time(f, tl, d):
+    """The flow time t the counter and the knob show. While a beat runs it is the time of the step on screen; in a
+    hold it is 1; after a result is hidden the knob rewinds to 0 (so that the noise starts again from t = 0)."""
+    if tl.running:
+        return d['meta']['flow_t'][d['clock'][tl.run](tl.p)]
+    if f < B_BEAT1:
+        return 0.0
+    if f < B_SWAP or B_HOLD2 <= f < B_RESET:
+        return 1.0
+    k = f - (B_SWAP if f < B_BEAT2 else B_RESET)
+    return 1.0 - smooth((k - REWIND[0]) / (REWIND[1] - REWIND[0]))
+
+
+def pulse_ages(f, d):
+    """Ages (frames) of the adapter pulses alive at frame f of beat 2: one starts at the beat's first frame and each
+    time the counter passes a tick of the axis."""
+    i = f - B_BEAT2
+    t = [d['meta']['flow_t'][d['clock']['adapter'](j / (N_DEN - 1))] for j in range(N_DEN)]
+    tick = [math.floor(v * TICKS + 1e-9) for v in t]
+    starts = [0] + [j for j in range(1, N_DEN) if tick[j] > tick[j - 1]]
+    return [i - c for c in starts if 0 <= i - c < PULSE_LIFE]
+
+
 # ------------------------------------------------------------------------------ parts
+def tracked(fig, x, y, s, size, font, color, tracking):
+    """Text with letter-spacing (figlib has none): glyph by glyph. Returns the end x."""
+    for ch in s:
+        fig.text(x, y, ch, size=size, font=font, color=color)
+        x += fonts.text_width(ch, size, font) + tracking
+    return x - tracking
+
+
+def wordmark(fig):
+    """'defog-adapt' with the hyphen drawn as a short orange bar (the adapter's colour), and the tagline in small
+    letter-spaced capitals."""
+    x = LEFT
+    fig.text(x, WM_BASE, 'defog', size=WM_SIZE, font='rcm')
+    x += fonts.text_width('defog', WM_SIZE, 'rcm') + 2.8
+    fig.rect(x, WM_BASE - 0.31 * WM_SIZE - 1.5, 9, 3, radius=1.5, fill=ORANGE, stroke='none', name='hyphen')
+    x += 9 + 2.8
+    fig.text(x, WM_BASE, 'adapt', size=WM_SIZE, font='rcm')
+    tracked(fig, LEFT + 1, TAG_BASE, 'STEER A FROZEN GRAPH GENERATOR', 6.6, 'rcm', GREY, 1.0)
+
+
+def snowflake(fig, cx, cy, r, color, sw, name='snowflake'):
+    """A six-armed snowflake with a V branch on each arm, drawn as round-capped lines."""
+    for k in range(6):
+        a = math.radians(90 + 60 * k)
+        ux, uy = math.cos(a), -math.sin(a)
+        fig.line(cx, cy, cx + r * ux, cy + r * uy, stroke=color, sw=sw, cap='round', name=name)
+        bx, by = cx + 0.55 * r * ux, cy + 0.55 * r * uy
+        for s in (-1, 1):
+            b = a + s * math.radians(52)
+            fig.line(bx, by, bx + 0.36 * r * math.cos(b), by - 0.36 * r * math.sin(b), stroke=color, sw=sw,
+                     cap='round', name=name)
+
+
 def frozen_model(fig, x, y, w, h, label, taper=TAPER, size=7.5):
-    """Frozen model: white trapezoid (narrow side right) with broad light blue diagonal stripes."""
+    """Frozen model: white trapezoid (narrow side right) with broad light blue diagonal stripes, and a badge with a
+    snowflake on its top corner (the pale stripes alone would hide a pale snowflake)."""
     t = h * taper / 2
     pts = [(x, y), (x + w, y + t), (x + w, y + h - t), (x, y + h)]
     fig.path(pts, closed=True, fill=WHITE, stroke='none', effects=[shadow()], name='frozen body')
@@ -155,27 +218,15 @@ def frozen_model(fig, x, y, w, h, label, taper=TAPER, size=7.5):
     fig.place(_svg_file('frost', x, y, w, h, content), x, y, w, h, name='frozen stripes')
     fig.path(pts, closed=True, fill='none', stroke=BLACK, sw=STYLE['outline'], name='frozen outline')
     fig.text(x + w / 2 - 2, y + h / 2 + size * 0.36, label, size=size, font='rcm', justify='center')
+    bx, by = x + w - 6, y + t + 1
+    fig.ellipse(bx, by, 8, fill=WHITE, stroke=ICE_D, sw=0.9, effects=[shadow(0.7, opacity=30)], name='frozen badge')
+    snowflake(fig, bx, by, 5.4, ICE_D, 1.05)
 
 
 def model_top_y(x):
     """y of the frozen model's slanted top edge at x."""
     t = MH * TAPER / 2
     return (MID - MH / 2) + t * (x - X_MODEL) / MW
-
-
-def loop_point(u):
-    """Point at fraction u (0..1) along the feedback loop: down from the output arrow, left under the model, up into
-    the input line."""
-    legs = [((X_LOOP_OUT, MID), (X_LOOP_OUT, LOOP_Y)), ((X_LOOP_OUT, LOOP_Y), (X_LOOP_IN, LOOP_Y)),
-            ((X_LOOP_IN, LOOP_Y), (X_LOOP_IN, MID + 2))]
-    lens = [math.dist(a, b) for a, b in legs]
-    d = u * sum(lens)
-    for (a, b), L in zip(legs, lens):
-        if d <= L:
-            k = d / L
-            return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k)
-        d -= L
-    return legs[-1][1]
 
 
 def adapter(fig, a):
@@ -202,25 +253,36 @@ def adapter(fig, a):
             fig.emoji('💧', x0 + drop / 2, base - 3.1, size=drop)
 
 
-def pulses(fig, frame, active):
-    """Orange ripples that leave the docking point into the model: the condition is injected at every step. One
-    ripple per round of the feedback loop, starting when the token re-enters the model, with a soft flash at the
-    docking point."""
-    if not active:
-        return
+def pulses(fig, ages):
+    """Orange ripples that leave the docking point into the model: the condition acts at every step. A pulse
+    starts each time the counter passes a tick of the time axis, with a soft flash at the docking point."""
     cx, cy = ADAPTER_X, model_top_y(ADAPTER_X)
-    phase = ((frame % PERIOD) / PERIOD - 0.85) % 1.0
-    flash = 1 - phase / 0.4
-    if flash > 0.02:
-        fig.ellipse(cx, cy + 1, 6.5, fill=ORANGE, stroke='none', opacity=pct(70 * flash), effects=[blur(3.2)],
-                    name='pulse flash')
-    for lag in (0.0, 0.2):
-        k = phase - lag
-        if k < 0 or k > 0.78:
-            continue
-        k /= 0.78
+    for age in ages:
+        k = age / PULSE_LIFE
+        flash = 1 - age / 3
+        if flash > 0.02:
+            fig.ellipse(cx, cy + 1, 6.5, fill=ORANGE, stroke='none', opacity=pct(70 * flash), effects=[blur(3.2)],
+                        name='pulse flash')
         fig.ellipse(cx, cy, 3.0 + 12.0 * k, fill='none', stroke=ORANGE, sw=2.0 - 1.1 * k,
                     opacity=pct(100 * (1 - k) ** 1.2), name='pulse')
+
+
+def time_axis(fig, t):
+    """The flow time as a scrubber under the stations: from the noise (t = 0) to the sample (t = 1). The knob
+    carries the counter; ticks the knob has passed turn black."""
+    x0, x1, y = X_NOISE, X_SAMPLE, AXIS_Y
+    xt = x0 + (x1 - x0) * t
+    fig.line(x0, y, x1, y, stroke=TRACK, sw=1.6, cap='round', name='time track')
+    if t > 0.004:
+        fig.line(x0, y, xt, y, stroke=BLACK, sw=1.6, cap='round', name='time passed')
+    for k in range(1, TICKS):
+        xk = x0 + (x1 - x0) * k / TICKS
+        fig.line(xk, y - 1.8, xk, y + 1.8, stroke=BLACK if t >= k / TICKS - 1e-9 else TICK_OFF, sw=0.7, name='tick')
+    fig.ellipse(x0, y, 2.1, fill=BLACK, stroke='none', name='t = 0')
+    fig.ellipse(x1, y, 2.1, fill=BLACK if t >= 0.999 else TICK_OFF, stroke='none', name='t = 1')
+    fig.ellipse(xt, y, 3.4, fill=WHITE, stroke=BLACK, sw=1.1, effects=[shadow(0.6, opacity=30)], name='knob')
+    fig.rich(xt, T_BASE, [('t', 'mi'), SP, ('=', 'mm'), SP, (f'{t:.2f}', 'mr')], size=8, color=BLACK,
+             justify='center')
 
 
 def sample_slot(fig, tl, d, atom_types, noise_pos, finals):
@@ -247,33 +309,20 @@ def sample_slot(fig, tl, d, atom_types, noise_pos, finals):
 def build(fig):
     d, atom_types, noise_pos, finals = load()
     tl = timeline(FRAME)
+    t = counter_time(FRAME, tl, d)
 
-    # left: wordmark and tagline
-    fig.text(LEFT, WM_BASE, 'defog-adapt', size=30, font='rcm')
-    fig.text(LEFT + 1, TAG_BASE, 'Steer a frozen graph generator', size=9.5, color=GREY)
+    wordmark(fig)
 
     # the noise, the same in both beats
     draw_state(fig, noise_pos, d['noise']['X'], d['noise']['bonds'], atom_types, name='noise')
     fig.text(X_NOISE, LABEL, 'Noise', size=7, justify='center')
 
-    # the model is applied again and again: a feedback loop under it, a token running round it while it works
-    fig.arrow([(X_LOOP_OUT, MID), (X_LOOP_OUT, LOOP_Y), (X_LOOP_IN, LOOP_Y), (X_LOOP_IN, MID + 2.5)], sw=0.9,
-              head=3.0, color=GREY, name='feedback loop')
-    if tl.running:
-        u = (FRAME % PERIOD) / PERIOD
-        for k in range(4):
-            px, py = loop_point((u - k * 0.045) % 1.0)
-            fig.ellipse(px, py, 2.1 - 0.4 * k, fill=BLACK if k == 0 else GREY, stroke='none',
-                        opacity=pct(100 - 22 * k), name='token')
-    shown = d['clock'][tl.run](tl.p) if tl.run else 0
-    t_val = d['meta']['flow_t'][shown] if (tl.running or (tl.show_result and tl.fade_noise < 0.5)) else 0.0
-    fig.rich((X_LOOP_OUT + X_LOOP_IN) / 2, LABEL, [('t', 'mi'), SP, ('=', 'mm'), SP, (f'{t_val:.2f}', 'mr')], size=7.5,
-             color=DGREY, justify='center')
+    time_axis(fig, t)
 
     fig.line(X_NOISE + NOISE_W / 2 + 4, MID, X_MODEL, MID, sw=STYLE['arrow_sw'], name='noise into model')
     frozen_model(fig, X_MODEL, MID - MH / 2, MW, MH, 'DeFoG')
-    fig.emoji('❄️', X_MODEL + MW - 3.5, MID - MH / 2 + MH * TAPER / 2 + 3, size=11)
-    pulses(fig, FRAME, tl.pulse)
+    if tl.pulse:
+        pulses(fig, pulse_ages(FRAME, d))
     adapter(fig, tl.a)
     fig.arrow([(X_MODEL + MW + 3, MID), (X_OUT, MID)], name='model to sample')
 
@@ -281,5 +330,7 @@ def build(fig):
     sample_slot(fig, tl, d, atom_types, noise_pos, finals)
     fig.text(X_SAMPLE, LABEL, 'Sample', size=7, justify='center')
     if tl.caption > 0.02 and tl.run:
-        fig.rich(X_SAMPLE, CAPTION, [('logP', 'mr'), SP, ('=', 'mm'), SP, (f'{d["runs"][tl.run]["logp"]:.1f}'.replace('-', '\u2212'), 'mr')],
-                 size=7.5, color=tint(DGREY, 1 - tl.caption), justify='center')
+        top = min(y for _, y in finals[tl.run]) - 4.1                    # the caption sits just above its molecule
+        value = f'{d["runs"][tl.run]["logp"]:.1f}'.replace('-', '−')
+        fig.rich(X_SAMPLE, max(12.0, top - 7.5), [('logP', 'mr'), SP, ('=', 'mm'), SP, (value, 'mr')], size=7.5,
+                 color=tint(DGREY, 1 - tl.caption), justify='center')

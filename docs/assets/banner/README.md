@@ -14,7 +14,7 @@ It illustrates the process. It is **not a measurement**: the pair was chosen fro
 | | |
 |---|---|
 | **Recorded** | The discrete state at each of the 200 steps: the element of every one of the 16 nodes and the bond order of every pair, for both runs, from identical initial noise (`trajectory.json`). Every atom and bond flip on screen is a flip the sampler made, including the transient wrong ones. The step counter shows the flow time *t* the model was given at the step on screen (polydec, `t = 2s - s^2`). The logP values are RDKit Crippen values of the decoded molecules. |
-| **Drawn** | Node *positions*. A graph has no coordinates, so the noise is a scatter and the finished molecule an RDKit 2D layout, and the drawing glides from one to the other (each node to the scatter slot that minimises its travel). Which frame shows which step: the 200 steps are shown at a pace that follows the number of flips, so quiet stretches are fast-forwarded. The loop arrow, the travelling dot and the orange pulses stand for one model application per step; they are not one-to-one with the 200 steps. |
+| **Drawn** | Node *positions*. A graph has no coordinates, so the noise is a scatter and the finished molecule an RDKit 2D layout, and the drawing glides from one to the other (each node to the scatter slot that minimises its travel). Which frame shows which step: the 200 steps are shown at a pace that follows the number of flips, so quiet stretches are fast-forwarded. The time axis under the stations runs from the noise (*t* = 0) to the sample (*t* = 1), and its knob rewinds when the noise comes back. The orange pulses fire each time the counter passes a tick of the axis (every 0.1) and stand for the adapter acting at every step; they are not one-to-one with the 200 steps. The logP caption sits just above its molecule. |
 | **Chosen** | The pair. 240 same-noise pairs were recorded (10 seeds of 24), 132 of them had two molecules that draw cleanly (connected, no charges, ring sizes 5 to 7, a layout with no crossing bonds), and these were ranked on: the adapter landing near the target, the base clearly lower, how few long wrong bonds survive into the second half of the run (a real transient, but one that reads as a drawing error), how early each run settles, element variety and a noise that is not all carbon. Candidate 8 of the ranked list was used. |
 
 ## Settings of the recorded run
@@ -29,7 +29,7 @@ steps with eta 25. The model and sampler are the ones in this package; the check
 
 | file | what it is |
 |---|---|
-| `banner.gif` | the animation: 1600 x 410 px, 193 frames at 15 fps, about 1.5 MB |
+| `banner.gif` | the animation: 1600 x 417 px, 193 frames at 15 fps, about 1.7 MB |
 | `trajectory.json` | the recorded run: both trajectories, the shared noise and every setting above |
 | `record_trajectories.py` | `record` same-noise pairs from checkpoints and rank them, `rank` again, `export` one pair |
 | `candidates.py` | the contact sheet of ranked candidate pairs, drawn the way the banner draws molecules |
