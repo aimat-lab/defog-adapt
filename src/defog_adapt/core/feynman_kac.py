@@ -263,6 +263,10 @@ class FeynmanKacSampler(Sampler):
                 if on_step is not None:
                     on_step(t_int + 1, self.sample_steps, "fk_resample")
 
+        # Hook: constrained samplers install their exact target here, after the last denoise step
+        # (the same hook, at the same place, as in `Sampler.sample`). No-op in the base sampler.
+        X, E = self._post_loop(X, E, node_mask)
+
         X, E, _ = model.limit_dist.ignore_virtual_classes(X, E)
         n_final = node_mask.sum(-1)
         samples = dense_to_pyg(X, E, y_raw, node_mask, n_final)

@@ -195,3 +195,56 @@ def test_sampling_with_the_trace_is_still_deterministic_under_a_seed(small_model
     a, b = run(), run()
     for x, y in zip(a, b):
         assert torch.equal(x.x, y.x) and torch.equal(x.edge_index, y.edge_index)
+
+
+# ---------------------------------------------------------------- the end-of-loop hook
+#
+# `Sampler` promises two hooks, and a constrained sampler (inpainting-style projections) needs both:
+# `_pre_step` before every denoise step and `_post_loop` once after the loop, which installs the exact
+# target on the final state. Feynman-Kac has its own loop and honoured only the first, so a constrained
+# subclass silently lost its exact target at the end, with no error and no warning.
+
+class _InstallsACore(FeynmanKacSampler):
+    """FK whose final state is projected onto a fixed core: node 0 is class 2, nodes 0 and 1 are linked."""
+
+    CORE_CLASS = 2
+
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        self.post_loop_calls = 0
+
+    def _post_loop(self, X, E, node_mask):
+        self.post_loop_calls += 1
+        X, E = X.clone(), E.clone()
+        X[:, 0] = 0
+        X[:, 0, self.CORE_CLASS] = 1
+        for a, b in ((0, 1), (1, 0)):
+            E[:, a, b] = 0
+            E[:, a, b, 1] = 1
+        return X, E
+
+
+def installs_a_core(model, **kw):
+    kw.setdefault("sample_steps", 20)
+    return _InstallsACore(model, toy_energy, eta=0.0, omega=0.0, time_distortion="identity",
+                          warmup_frac=0.4, **kw)
+
+
+def test_a_constrained_subclass_gets_its_final_state_installed(small_model):
+    sampler = installs_a_core(small_model, beta=2.0)
+    torch.manual_seed(3)
+    samples = sampler.sample(8, num_nodes=6, device=CPU, show_progress=False)
+
+    assert len(samples) == 8
+    for s in samples:
+        assert int(s.x.argmax(dim=-1)[0]) == _InstallsACore.CORE_CLASS
+        links = {tuple(pair) for pair in s.edge_index.t().tolist()}
+        assert (0, 1) in links and (1, 0) in links
+
+
+def test_the_end_of_loop_hook_runs_once_per_call_and_not_per_step(small_model):
+    sampler = installs_a_core(small_model, beta=2.0)
+    sampler.sample(4, num_nodes=6, device=CPU, show_progress=False)
+    assert sampler.post_loop_calls == 1
+    sampler.sample(4, num_nodes=6, device=CPU, show_progress=False)
+    assert sampler.post_loop_calls == 2
