@@ -1,18 +1,19 @@
-# defog-adapt
+<h1 align="center">
+  <img src="docs/assets/banner/banner.gif" alt="defog-adapt: steer a frozen graph generator" width="100%">
+</h1>
 
-Frozen-base **adapters**, **Feynman-Kac steering** and **reinforcement-learning fine-tuning** for
-[DeFoG](https://arxiv.org/abs/2410.04263) discrete flow matching on graphs, with **molecules** as the
-validated domain.
+<p align="center"><sub>One recorded run of the sampler, twice from the same noise: the frozen base alone, then with
+a logP adapter (target 4.5). Picked from 240 draws for legibility, so an illustration and not a measurement.
+<a href="docs/assets/banner/README.md">How it was made</a>.</sub></p>
 
-> **Status: alpha (0.1).** Research code with a narrow, honest scope. It ships **no model weights** and **no
-> evaluation harness**, and its numbers were measured in the research fork it was extracted from. Read
-> [`docs/caveats.md`](docs/caveats.md) before relying on any of them.
+Steer a frozen [DeFoG](https://arxiv.org/abs/2410.04263) discrete flow-matching graph generator toward a property
+target with small swappable **adapters**, inference-time **Feynman-Kac steering** and **reinforcement-learning
+fine-tuning**. Molecules are the validated domain, and only features with a recorded positive result are included
+([what was left out, and why](docs/migration.md#what-was-removed)).
 
-DeFoG generates graphs with a discrete flow-matching model whose sampling rates are built at generation time.
-This package adds the pieces that turn an unconditional molecular DeFoG model into one you can **steer**, and
-keeps **only the features that have a recorded positive result**. Things that were tried and came out null,
-negative or untried are not here (see [`docs/migration.md`](docs/migration.md#what-was-removed) for the list and
-the reasons).
+> **Status: alpha (0.1), research code.** It ships no model weights and no evaluation harness, and its numbers
+> were measured in the research fork it was extracted from. Read [`docs/caveats.md`](docs/caveats.md) before
+> relying on any of them.
 
 ## What is in it
 

@@ -24,6 +24,8 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - `examples/`: a CPU quickstart, PyComex recipes (E1 base training, structural RL, adapter training, adapter
   RL), the property-head script and `steer_zinc.py`, the assembly.
 - `docs/`: adapters, steering, RL, results, caveats, migration.
+- `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
+  adapter, from the same noise), its recorded trajectory and the scripts that made it.
 
 ### Changed relative to the research fork
 
