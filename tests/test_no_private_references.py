@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: what is scanned: everything that would be published or that a contributor reads
 SCANNED = ["src", "examples", "docs", "tests", "README.md", "CHANGELOG.md", "CLAUDE.md", "pyproject.toml",
-           "NOTICE", "LICENSE", "CITATION.cff"]
+           "NOTICE", "LICENSE", "CITATION.cff", "CONTRIBUTING.md", "SECURITY.md"]
 SKIP_SUFFIXES = {".json", ".ckpt", ".pt", ".pyc", ".png", ".mp4", ".gz"}
 
 PATTERNS = {

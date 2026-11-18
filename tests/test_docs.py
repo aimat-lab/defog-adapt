@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_FILES = sorted([ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "CLAUDE.md",
+DOC_FILES = sorted([ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "CLAUDE.md", ROOT / "CONTRIBUTING.md",
+                    ROOT / "SECURITY.md",
                     *(ROOT / "docs").glob("*.md"), *(ROOT / "examples").glob("*.md")])
 DOC_FILES = [p for p in DOC_FILES if p.exists()]
 

@@ -80,6 +80,8 @@ include = [
     "/NOTICE",
     "/CHANGELOG.md",
     "/CITATION.cff",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
 ]
 
 [tool.pytest.ini_options]
