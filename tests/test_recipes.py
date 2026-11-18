@@ -12,7 +12,7 @@ They are OPT-IN, because they need what a clean checkout does not have:
 * ``DEFOG_ADAPT_CKPTS``  a directory with ``zinc_e1_seed42_kek.ckpt`` (an E1 base), ``zinc_kek_base.ckpt``
                          (the base the adapters sit on), ``logp_xattn_adapter.ckpt`` and
                          ``heads_kek/logp_head.ckpt`` + ``heads_kek/logp_head_size.ckpt``;
-* PyComex (``pip install "defog-adapt[recipes]"``) for the PyComex recipes.
+* PyComex (``pip install pycomex``) for the PyComex recipes.
 
 A smoke run says the pipeline EXECUTES and its checks pass. It does not say the models are any good:
 the molecules a two-epoch, five-step run produces are mostly invalid.
@@ -41,7 +41,7 @@ def have(*relative):
 needs_data = pytest.mark.skipif(
     not DATA or not ((Path(DATA) / "zinc250k").is_dir()), reason="set DEFOG_ADAPT_HOME to the reference data")
 needs_pycomex = pytest.mark.skipif(importlib.util.find_spec("pycomex") is None,
-                                   reason='pip install "defog-adapt[recipes]"')
+                                   reason="pip install pycomex")
 needs_examples = pytest.mark.skipif(not EXAMPLES.is_dir(), reason="examples/ is not in an installed wheel")
 
 

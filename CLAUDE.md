@@ -23,14 +23,14 @@ purpose. Do not re-add a feature without evidence that it works, and say what th
 ## Commands
 
 ```bash
-uv venv --python 3.12 .venv && uv pip install -e ".[chem,data,dev]"   # CPU torch first: see the README
+uv venv --python 3.12 .venv && uv pip install -e ".[chem]" --group dev   # CPU torch first: see the README
 OMP_NUM_THREADS=2 .venv/bin/python -m pytest -n 8                       # unit tests, no network, ~30 s
 DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest -m parity   # parity gate (local only)
 DEFOG_ADAPT_HOME=/path/to/data DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest tests/test_recipes.py
 ```
 
 Without `OMP_NUM_THREADS=2` the suite takes many times longer: tiny tensors across every core thrash. The
-recipes need PyComex, which caps `numpy<2`, so run them in an environment built from `.[recipes]`.
+recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them in an environment of their own.
 
 ## Rules
 

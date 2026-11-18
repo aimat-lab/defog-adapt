@@ -15,17 +15,18 @@ to [`docs/results.md`](docs/results.md) with its source. Bug fixes, documentatio
 
 ```bash
 git clone https://github.com/aimat-lab/defog-adapt && cd defog-adapt
-uv venv --python 3.12 .venv && uv pip install -e ".[chem,data,dev]"    # CPU PyTorch first if you have no GPU
+uv venv --python 3.12 .venv && uv pip install -e ".[chem]" --group dev   # CPU PyTorch first if you have no GPU
 OMP_NUM_THREADS=2 .venv/bin/python -m pytest -n 8                       # the unit suite: no network, about 30 s
 ```
 
-With plain pip, `pip install -e ".[all]"` and `pytest` do the same. Keep `OMP_NUM_THREADS=2`: without it the suite
-takes many times longer, because tiny tensors spread across every core thrash.
+With plain pip (25.1 or newer), `pip install -e ".[chem]" --group dev` and `pytest` do the same. `chem` is the only
+extra; the contributor tools are the `dev` dependency group. Keep `OMP_NUM_THREADS=2`: without it the suite takes
+many times longer, because tiny tensors spread across every core thrash.
 
 Two checks are opt-in because they need the research checkpoints and data. `tests/parity` runs real checkpoints
 through the library and compares them with golden outputs from the research package; it is the release gate.
-`tests/test_recipes.py` runs every recipe in `examples/` end to end (these need an environment built from
-`.[recipes]`):
+`tests/test_recipes.py` runs every recipe in `examples/` end to end (these also need PyComex, which caps numpy below
+2, so give them an environment of their own and `pip install pycomex` there):
 
 ```bash
 DEFOG_ADAPT_CKPTS=/path/to/ckpts python -m pytest -m parity

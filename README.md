@@ -19,17 +19,9 @@ fine-tuning**. Molecules are the validated domain, and only features with a reco
 pip install "defog-adapt[chem]"
 ```
 
-The `chem` extra adds RDKit, the molecular domain that every recorded result uses. The other extras:
-
-| extra | adds | for |
-|---|---|---|
-| `chem` | RDKit, SciPy, Pillow | the molecular domain |
-| `data` | pandas | the reference-split loaders (ZINC250k, MOSES) |
-| `recipes` | PyComex, plus `chem` and `data` | the runnable experiments in `examples/` |
-| `monitor` | psutil, pynvml | GPU and host monitoring while training |
-| `all` | everything above, plus the test and build tools | development |
-
-Combine them as usual, for example `pip install "defog-adapt[chem,data]"`. To work from a clone instead:
+That is the whole install. The `chem` extra adds RDKit, the molecular domain that every recorded result uses; it is
+an extra because the core is domain-agnostic graph code and RDKit is a large compiled dependency. Everything else
+comes with the package. To work from a clone instead:
 
 ```bash
 git clone https://github.com/aimat-lab/defog-adapt && cd defog-adapt
@@ -37,7 +29,9 @@ pip install -e ".[chem]"
 ```
 
 Python 3.10 or newer, PyTorch 2.1 or newer, PyTorch Geometric 2.3 or newer and PyTorch Lightning 2.4 or newer. The
-package is `defog_adapt`; it does not clash with the unrelated `defog` package on PyPI.
+package is `defog_adapt`; it does not clash with the unrelated `defog` package on PyPI. The recipes in
+[`examples/`](examples/README.md) also need [PyComex](https://pypi.org/project/pycomex/) (`pip install pycomex`),
+which is not bundled because it caps numpy below 2.
 
 <details>
 <summary>Installation problems?</summary>

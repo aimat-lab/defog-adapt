@@ -64,13 +64,26 @@ def test_ci_installs_cpu_pytorch_before_everything_else():
 def test_every_floor_pin_is_the_lower_bound_in_pyproject():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     pins = floor_module().floors(pyproject)
-    lowers = {}
-    for requirement in pyproject["project"]["dependencies"] + pyproject["project"]["optional-dependencies"]["chem"] \
-            + pyproject["project"]["optional-dependencies"]["data"]:
-        name, version = re.match(r"([\w.\-]+)>=([\w.]+)", requirement).groups()
-        lowers[name] = version
-    assert {p.split("==")[0] for p in pins} == set(lowers)
-    assert all(p.split("==")[1] == lowers[p.split("==")[0]] for p in pins)
+    lowers, unpinned = {}, set()
+    for requirement in pyproject["project"]["dependencies"] + pyproject["project"]["optional-dependencies"]["chem"]:
+        match = re.match(r"([\w.\-]+)>=([\w.]+)", requirement)
+        if match:
+            lowers[match.group(1)] = match.group(2)
+        else:
+            unpinned.add(re.split(r"[<>=!~ ]", requirement)[0])     # no tested floor: installed unpinned
+    assert dict(p.split("==") for p in pins if "==" in p) == lowers
+    assert {p for p in pins if "==" not in p} == unpinned
+
+
+def test_the_only_extra_is_chem_and_the_rest_is_installed_by_default():
+    """The user-facing install is one line: everything but RDKit comes with the package."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert list(pyproject["project"]["optional-dependencies"]) == ["chem"]
+    core = {re.split(r"[<>=!~ ]", r)[0] for r in pyproject["project"]["dependencies"]}
+    assert {"pandas", "psutil", "nvidia-ml-py"} <= core
+    assert "pycomex" not in core and "pynvml" not in core, \
+        "PyComex caps numpy below 2, and the PyPI package pynvml is deprecated and warns on import"
+    assert "dev" in pyproject["dependency-groups"], "contributor tools belong in a dependency group, not an extra"
 
 
 def test_the_floors_script_converts_lower_bounds_and_ignores_the_rest():

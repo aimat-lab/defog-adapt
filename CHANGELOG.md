@@ -29,6 +29,8 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - The README opens with installation and a self-contained quickstart that runs on a CPU after `pip install` (and is
   executed by `tests/test_readme_quickstart.py`), and has a results figure (`docs/assets/results_logp.py`), a
   BibTeX block and badges. `CONTRIBUTING.md` and `SECURITY.md` are new.
+- One extra, `chem` (RDKit). pandas, psutil and nvidia-ml-py are core dependencies; the contributor tools are a
+  `dev` dependency group; PyComex, which the recipes need, is installed separately because it caps numpy below 2.
 
 ### Changed relative to the research fork
 

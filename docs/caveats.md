@@ -154,8 +154,9 @@ and rejuvenation (dominated), and interior adapters.
   exactly its minimum on Python 3.10 (torch 2.1, PyG 2.3, Lightning 2.4, numpy 1.23, matplotlib 3.5.3).
   `pytorch_lightning` 2.0 to 2.3 cannot be imported in a current environment at all (they import
   `pkg_resources`, which setuptools 81 removed), which is why the floor is 2.4.
-* PyComex caps `numpy<2`, so `defog-adapt[recipes]` resolves to a numpy 1.x stack where the other extras
-  do not.
+* PyComex, which the recipes need, caps `numpy<2`. It is therefore not a dependency of this package (it would
+  hold every user on numpy 1.x): an environment with PyComex resolves to a numpy 1.x stack, and
+  `defog-adapt[chem]` alone does not.
 * The test suite and the recipes were run on **CPU and, for the steering assembly, one consumer GPU**.
   Multi-GPU and cluster behaviour (the chained-link training, `PerLinkTimer`) is covered by unit tests
   but was not exercised here.
