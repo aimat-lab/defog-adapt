@@ -26,6 +26,9 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - `docs/`: adapters, steering, RL, results, caveats, migration.
 - `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
   adapter, from the same noise), its recorded trajectory and the scripts that made it.
+- The README opens with installation and a self-contained quickstart that runs on a CPU after `pip install` (and is
+  executed by `tests/test_readme_quickstart.py`), and has a results figure (`docs/assets/results_logp.py`), a
+  BibTeX block and badges. `CONTRIBUTING.md` and `SECURITY.md` are new.
 
 ### Changed relative to the research fork
 

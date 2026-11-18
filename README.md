@@ -2,6 +2,12 @@
   <img src="docs/assets/banner/banner.gif" alt="defog-adapt: steer a frozen graph generator" width="100%">
 </h1>
 
+<p align="center">
+  <a href="https://github.com/aimat-lab/defog-adapt/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/aimat-lab/defog-adapt/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <img alt="Python 3.10 or newer" src="https://img.shields.io/badge/python-3.10%2B-3776ab">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-4c9a2a"></a>
+</p>
+
 Steer a frozen [DeFoG](https://arxiv.org/abs/2410.04263) discrete flow-matching graph generator toward a property
 target with small swappable **adapters**, inference-time **Feynman-Kac steering** and **reinforcement-learning
 fine-tuning**. Molecules are the validated domain, and only features with a recorded positive result are included
@@ -10,27 +16,115 @@ fine-tuning**. Molecules are the validated domain, and only features with a reco
 ## Installation
 
 ```bash
-pip install "defog-adapt[chem]"        # + RDKit: the molecular domain, which every recorded result uses
-pip install "defog-adapt[chem,data]"   # + pandas: the reference-split loaders (ZINC250k, MOSES)
-pip install "defog-adapt[recipes]"     # + PyComex: the runnable experiments in examples/
+pip install "defog-adapt[chem]"
 ```
 
-Python 3.10 or newer, PyTorch 2.1 or newer, PyTorch Geometric 2.3 or newer and PyTorch Lightning 2.4 or newer.
-Install PyTorch for your platform first if you want a GPU build. The package is `defog_adapt`; it does not clash
-with the unrelated `defog` package on PyPI.
+The `chem` extra adds RDKit, the molecular domain that every recorded result uses. The other extras:
 
-## Quickstart
+| extra | adds | for |
+|---|---|---|
+| `chem` | RDKit, SciPy, Pillow | the molecular domain |
+| `data` | pandas | the reference-split loaders (ZINC250k, MOSES) |
+| `recipes` | PyComex, plus `chem` and `data` | the runnable experiments in `examples/` |
+| `monitor` | psutil, pynvml | GPU and host monitoring while training |
+| `all` | everything above, plus the test and build tools | development |
 
-The shortest tour of every building block is a toy that runs on a CPU in tens of seconds, with no downloads
-and no checkpoints ([`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)):
+Combine them as usual, for example `pip install "defog-adapt[chem,data]"`. To work from a clone instead:
 
 ```bash
 git clone https://github.com/aimat-lab/defog-adapt && cd defog-adapt
-pip install -e ".[chem]" && python examples/quickstart_cpu.py
+pip install -e ".[chem]"
 ```
 
-It trains a tiny base, an adapter, a property head and a size model, samples with and without Feynman-Kac
-steering, and decodes and scores the molecules. **It is a wiring check, not a result.**
+Python 3.10 or newer, PyTorch 2.1 or newer, PyTorch Geometric 2.3 or newer and PyTorch Lightning 2.4 or newer. The
+package is `defog_adapt`; it does not clash with the unrelated `defog` package on PyPI.
+
+<details>
+<summary>Installation problems?</summary>
+
+* **You want a GPU build, or a CPU-only one, of PyTorch.** Install PyTorch for your platform first
+  ([pytorch.org](https://pytorch.org/get-started/locally/)), then defog-adapt: pip keeps the PyTorch you installed.
+  Otherwise pip picks a build for you.
+* **There is no RDKit wheel for your platform.** Install RDKit from conda-forge first
+  (`conda install -c conda-forge rdkit`), then install defog-adapt in the same environment.
+
+</details>
+
+## Quickstart
+
+Everything here runs on a CPU, with no downloads and no checkpoints. This trains a toy DeFoG model and a logP
+adapter on a few dozen small molecules, then samples with the adapter steered toward two logP targets (about half a
+minute):
+
+```python
+import pytorch_lightning as pl
+import torch
+from rdkit import Chem
+from rdkit.Chem import Crippen
+from torch_geometric.loader import DataLoader
+
+from defog_adapt.core import (AdaLNAdapter, AdapterComposition, AdapterModule, AdaptedSampler,
+                              ConditionBranch, DeFoGModel)
+from defog_adapt.domains.molecule import build_encoders, mol_to_smiles, pyg_data_to_mol, smiles_to_pyg_data
+from defog_adapt.presets import ADAPTER_WEIGHT
+
+EPOCHS, N = 120, 64
+pl.seed_everything(0)
+
+# A few dozen small molecules: enough to run the whole pipeline, far too few to be good.
+smiles = """CCO CCCO CCCCO CCCCCO CCN CCCN CCCCN CCOC CCCOC CCOCC CC(C)O CC(C)N CC(C)C CCC(C)C CC(=O)C CCC(=O)C
+CC(=O)O CCC(=O)O CC(=O)N NCCO NCCN OCCO OCCCO CNC CCNCC CN(C)C C1CCCCC1 C1CCCC1 C1CCNCC1 C1CCOCC1 OC1CCCCC1
+c1ccccc1 Cc1ccccc1 CCc1ccccc1 Oc1ccccc1 Nc1ccccc1 COc1ccccc1 c1ccncc1 Cc1ccncc1 OCc1ccccc1""".split()
+
+# Molecules become graphs (atoms and bonds as classes); each carries the property the adapter learns, logP.
+atom_enc, atom_dec, bond_enc, bond_dec = build_encoders(["C", "N", "O"], ["SINGLE", "DOUBLE", "TRIPLE"])
+graphs = []
+for s in smiles:
+    g = smiles_to_pyg_data(s, atom_enc, bond_enc, kekulize=True)
+    g.cond = torch.tensor([[Crippen.MolLogP(Chem.MolFromSmiles(s))]])
+    graphs.append(g)
+loader = DataLoader(graphs, batch_size=16, shuffle=True)
+logp = torch.cat([g.cond for g in graphs])
+
+
+def fit(module):
+    pl.Trainer(max_epochs=EPOCHS, accelerator="cpu", logger=False, enable_progress_bar=False,
+               enable_model_summary=False, enable_checkpointing=False).fit(module, loader)
+
+
+base = DeFoGModel.from_dataloader(loader, n_layers=2, hidden_dim=32)      # 1. an unconditional DeFoG model
+fit(base)
+base.eval()
+adapter = AdaLNAdapter.for_base(base, cond_dim=1, cond_mean=[float(logp.mean())], cond_std=[float(logp.std())])
+fit(AdapterModule(base, adapter))                                         # 2. the base stays frozen: only the adapter trains
+adapter.eval()
+
+for target in (0.0, 2.0):                                                 # 3. sample, steered toward a logP
+    branch = ConditionBranch(adapter, torch.tensor([target]), ADAPTER_WEIGHT["logp"])
+    sampler = AdaptedSampler(base, AdapterComposition([branch], base=base), sample_steps=60)
+    graphs_out = sampler.sample(N, device=torch.device("cpu"), show_progress=False)
+    decoded = [pyg_data_to_mol(g, atom_dec, bond_dec) for g in graphs_out]
+    found = [mol_to_smiles(m) for m in decoded if m is not None]          # None where the graph is not a molecule
+    values = [Crippen.MolLogP(Chem.MolFromSmiles(x)) for x in found if x]
+    print(f"target logP {target:.1f}: {len(values)}/{N} valid, mean logP {sum(values) / max(len(values), 1):.2f}, e.g. {found[:3]}")
+```
+
+It prints one line per target, after some start-up messages from PyTorch Lightning (the details vary a little
+between machines and versions):
+
+```text
+target logP 0.0: 57/64 valid, mean logP -0.26, e.g. ['NCCO', 'CC(O)CO', 'NC1=[O+]C(O)O1.O']
+target logP 2.0: 58/64 valid, mean logP 1.95, e.g. ['CCC(CC)CC', 'CC1CCC1C', 'CCCC']
+```
+
+**This is a wiring check, not a result.** The model is tiny and sees a few dozen molecules, so expect some odd ones
+among the samples; what it shows is the idea: one frozen base, and a small adapter that moves the samples toward the
+property you ask for. The same code at scale produced the numbers [below](#results-at-a-glance). For a tour of every
+building block (property head, size model, Feynman-Kac steering), run [`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)
+from a clone.
+
+<details>
+<summary>With real checkpoints: Feynman-Kac steering</summary>
 
 To steer a real model you need trained checkpoints. None ship with 0.1; the recipes in
 [`examples/`](examples/README.md) train them. The assembly is [`examples/steer_zinc.py`](examples/steer_zinc.py),
@@ -62,6 +156,8 @@ sampler = FeynmanKacSampler(base, energy, composition=composition, **FK_STEERING
 graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target))
 ```
 
+</details>
+
 ## What is in it
 
 | | what it does | evidence |
@@ -75,6 +171,10 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 | **Spectrum energy** (`SpectrumEnergy`) | Steer toward IR bands, with a predictor you supply. | *thin*: see the caveats |
 
 ## Results at a glance
+
+<p align="center">
+  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of each arm, lower is better: 0.542 for the first adapter, 0.325 with cross-attention and Fourier features, 0.313 with learned node counts and 0.230 with Feynman-Kac steering. RL on the adapter instead of Feynman-Kac gives 0.281, and RL with Feynman-Kac 0.216, not significantly better than Feynman-Kac alone." width="760">
+</p>
 
 ZINC250k, logP, the FreeGress protocol (**100 targets from real molecules, 10 generations each**; error between
 the target and the decoded property; validation). Lower is better, and the run-to-run noise floor is about 0.011.
@@ -107,24 +207,44 @@ A re-measurement with `examples/steer_zinc.py` on 40 real validation targets rep
 | [`docs/caveats.md`](docs/caveats.md) | provenance, noise, what is thin, what was removed |
 | [`docs/migration.md`](docs/migration.md) | for users of the research fork (`defog`) |
 | [`examples/README.md`](examples/README.md) | the recipes, in pipeline order |
+| [`CHANGELOG.md`](CHANGELOG.md) | what changed in each release |
 
-## Relationship to DeFoG, citation and license
+## Citation, relationship to DeFoG and license
 
 The base model follows the upstream [DeFoG](https://github.com/qym7/DeFoG) implementation (Qin, Madeira,
 Thanou, Frossard; ICML 2025). Everything built on top of it here was developed in a research fork. This package is
 **not affiliated with or endorsed by the DeFoG authors**; see [`NOTICE`](NOTICE) for the full credits and the
-papers behind each method. If you use it, please cite this package and the DeFoG paper ([`CITATION.cff`](CITATION.cff)).
+papers behind each method. If you use it, please cite this package and the DeFoG paper
+([`CITATION.cff`](CITATION.cff), which GitHub turns into a "Cite this repository" button).
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
+@software{teufel2026defogadapt,
+  author = {Teufel, Jonas},
+  title  = {defog-adapt},
+  year   = {2026},
+  url    = {https://github.com/aimat-lab/defog-adapt}
+}
+
+@inproceedings{qin2025defog,
+  title     = {{DeFoG}: Discrete Flow Matching for Graph Generation},
+  author    = {Qin, Yiming and Madeira, Manuel and Thanou, Dorina and Frossard, Pascal},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {267},
+  year      = {2025},
+  url       = {https://arxiv.org/abs/2410.04263}
+}
+```
+
+</details>
 
 MIT, see [`LICENSE`](LICENSE). The upstream copyright notice is retained.
 
-## Development
+## Contributing
 
-```bash
-pip install -e ".[all]"
-pytest                                  # the unit suite, about half a minute on a CPU
-DEFOG_ADAPT_HOME=... DEFOG_ADAPT_CKPTS=... pytest tests/test_recipes.py   # recipe smoke runs (opt-in)
-```
-
-`tests/parity` runs real checkpoints through the library and compares against golden outputs from the research
-package; it is opt-in (it needs the checkpoints) and is the release gate. See [`CLAUDE.md`](CLAUDE.md) for the
-layout and conventions.
+Issues and pull requests are welcome; please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. It explains the one rule
+specific to this project (a feature needs a recorded positive result), how to run the tests and what the checks
+guard. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
