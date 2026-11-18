@@ -7,19 +7,7 @@ target with small swappable **adapters**, inference-time **Feynman-Kac steering*
 fine-tuning**. Molecules are the validated domain, and only features with a recorded positive result are included
 ([what was left out, and why](docs/migration.md#what-was-removed)).
 
-## What is in it
-
-| | what it does | evidence |
-|---|---|---|
-| **Frozen-base adapters** (`AdaLNAdapter`, `AdapterModule`, `AdapterComposition`) | A small conditional adapter over a frozen unconditional base: swappable (one file per property) and composable (two properties multiply). Node cross-attention and Fourier bands on the condition. | logP, QED, TPSA and SAScore on ZINC250k; joint logP + QED; Morgan fingerprints |
-| **Learned size model** (`LearnedSizeDistribution`) | Draw the node count from `P(n \| target)` instead of the dataset marginal. | -0.0103 logP and -0.0058 QED error |
-| **Feynman-Kac steering** (`FeynmanKacSampler`, `StandardisedEnergy`, `PropertyHead`) | Inference-time particle steering toward a target, scored by a learned property head, with a dimensionless `beta`. | the largest single lever measured: logP 0.3132 to 0.2299 |
-| **GDPO fine-tuning** (`GDPOTrainer`, `AdapterGDPOTrainer`) | Policy-gradient RL on the base (fewer fragments, odd rings) or on an adapter (tighter conditioning). | -13.6% logP and -19.5% QED with validity up; structural RL on ZINC |
-| **Kekulized molecular representation** | Dropping the aromatic bond class makes a whole kind of validity failure impossible. | MOSES validity 0.884 to 0.991 |
-| **Inpainting** (`InpaintingSampler`) | Freeze a substructure and grow the rest (RePaint-style). | *thin*: one demonstration |
-| **Spectrum energy** (`SpectrumEnergy`) | Steer toward IR bands, with a predictor you supply. | *thin*: see the caveats |
-
-## Install
+## Installation
 
 ```bash
 pip install "defog-adapt[chem]"        # + RDKit: the molecular domain, which every recorded result uses
@@ -31,7 +19,7 @@ Python 3.10 or newer, PyTorch 2.1 or newer, PyTorch Geometric 2.3 or newer and P
 Install PyTorch for your platform first if you want a GPU build. The package is `defog_adapt`; it does not clash
 with the unrelated `defog` package on PyPI.
 
-## Try it
+## Quickstart
 
 The shortest tour of every building block is a toy that runs on a CPU in tens of seconds, with no downloads
 and no checkpoints ([`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)):
@@ -42,8 +30,11 @@ pip install -e ".[chem]" && python examples/quickstart_cpu.py
 ```
 
 It trains a tiny base, an adapter, a property head and a size model, samples with and without Feynman-Kac
-steering, and decodes and scores the molecules. **It is a wiring check, not a result.** The assembly with real
-checkpoints is [`examples/steer_zinc.py`](examples/steer_zinc.py); the core of it is:
+steering, and decodes and scores the molecules. **It is a wiring check, not a result.**
+
+To steer a real model you need trained checkpoints. None ship with 0.1; the recipes in
+[`examples/`](examples/README.md) train them. The assembly is [`examples/steer_zinc.py`](examples/steer_zinc.py),
+and the core of it is:
 
 ```python
 import torch
@@ -70,6 +61,18 @@ energy = StandardisedEnergy([(LearnedPropertyEnergy(head, target, domain, atom_e
 sampler = FeynmanKacSampler(base, energy, composition=composition, **FK_STEERING, **ADAPTER_SAMPLING)
 graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target))
 ```
+
+## What is in it
+
+| | what it does | evidence |
+|---|---|---|
+| **Frozen-base adapters** (`AdaLNAdapter`, `AdapterModule`, `AdapterComposition`) | A small conditional adapter over a frozen unconditional base: swappable (one file per property) and composable (two properties multiply). Node cross-attention and Fourier bands on the condition. | logP, QED, TPSA and SAScore on ZINC250k; joint logP + QED; Morgan fingerprints |
+| **Learned size model** (`LearnedSizeDistribution`) | Draw the node count from `P(n \| target)` instead of the dataset marginal. | -0.0103 logP and -0.0058 QED error |
+| **Feynman-Kac steering** (`FeynmanKacSampler`, `StandardisedEnergy`, `PropertyHead`) | Inference-time particle steering toward a target, scored by a learned property head, with a dimensionless `beta`. | the largest single lever measured: logP 0.3132 to 0.2299 |
+| **GDPO fine-tuning** (`GDPOTrainer`, `AdapterGDPOTrainer`) | Policy-gradient RL on the base (fewer fragments, odd rings) or on an adapter (tighter conditioning). | -13.6% logP and -19.5% QED with validity up; structural RL on ZINC |
+| **Kekulized molecular representation** | Dropping the aromatic bond class makes a whole kind of validity failure impossible. | MOSES validity 0.884 to 0.991 |
+| **Inpainting** (`InpaintingSampler`) | Freeze a substructure and grow the rest (RePaint-style). | *thin*: one demonstration |
+| **Spectrum energy** (`SpectrumEnergy`) | Steer toward IR bands, with a predictor you supply. | *thin*: see the caveats |
 
 ## Results at a glance
 
@@ -104,21 +107,6 @@ A re-measurement with `examples/steer_zinc.py` on 40 real validation targets rep
 | [`docs/caveats.md`](docs/caveats.md) | provenance, noise, what is thin, what was removed |
 | [`docs/migration.md`](docs/migration.md) | for users of the research fork (`defog`) |
 | [`examples/README.md`](examples/README.md) | the recipes, in pipeline order |
-
-## What this is not
-
-* **Not a trained model.** No weights ship with 0.1; the recipes in `examples/` produce them.
-* **Not the evaluation harness.** The conditional numbers follow a published protocol and were produced by a
-  separate script; `examples/steer_zinc.py --evaluate` follows the same protocol shape but is not bit-reproducible
-  against it. FCD and the other benchmark metrics need packages this library does not depend on.
-* **Not a pipeline or a command-line tool.** It is a library plus recipes you read and adapt.
-* **Not a reproduction of every figure.** The code is checked for equivalence with the research package (a
-  golden-output test on real checkpoints) and by its unit tests; the numbers come from the research fork's logs.
-
-## Security
-
-Checkpoints are loaded with `torch.load(..., weights_only=False)` because they carry configuration dictionaries,
-and **unpickling executes code**. Only load checkpoints you trust.
 
 ## Relationship to DeFoG, citation and license
 
