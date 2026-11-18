@@ -7,9 +7,9 @@ record_trajectories.py); only the node POSITIONS are a drawing choice, because a
 scattered and the final molecule uses an RDKit 2D layout, and the drawing glides from one to the other while the
 categories flip.
 
-While a beat runs, small pulses travel from the noise through the model and along the arrow to the sample; one pulse
-stands for one application of the model. Where the adapter is docked, each pulse passes under it, the adapter's ring
-fires and the pulse leaves the model orange. A faint time axis under the stations runs from the noise (t = 0) to the
+While a beat runs, small pulses travel from the noise, disappear behind the model and come out of it along the arrow to
+the sample; one pulse stands for one application of the model. Where the adapter is docked, each pulse passes under it,
+the adapter's ring fires and the pulse comes out of the model orange. A faint time axis under the stations runs from the noise (t = 0) to the
 sample (t = 1); its knob carries the flow time the model was given at the step on screen, and it rewinds when the
 noise comes back.
 
@@ -49,6 +49,7 @@ T_BASE = 120.5                     # baseline of the t counter that rides under 
 ADAPTER_X = X_MODEL + 0.36 * MW    # where the adapter docks, along the model's top edge
 ADAPTER_W, ADAPTER_H, DOCK_GAP = 26, 17, 5
 FLOW_X0, FLOW_X1 = X_NOISE + NOISE_W / 2 + 4, X_OUT      # the path of the pulses: line into the model, model, arrow
+FLOW_TAU = (0.0, 0.30, 0.55, 1.0)                        # time fractions at which a pulse reaches the model, leaves it
 
 FROST, FROST_SW, FROST_GAP = '#b9dcff', 2.0, 5.0       # light blue stripes: frozen weights (as in the visual abstract)
 ICE_D = '#2275c9'                  # the frozen model's blue, deeper than the pale stripes so that a snowflake can be seen
@@ -187,15 +188,21 @@ def pulse_starts():
     return range(0, N_DEN - PULSE_TRAVEL, PULSE_PERIOD)
 
 
+def flow_x(tau):
+    """x of a pulse at time fraction tau (0..1) of its run. It lingers where it can be seen (the line into the model,
+    the arrow) and zips through the stretch behind the model, whose body hides it."""
+    return float(np.interp(tau, FLOW_TAU, (FLOW_X0, X_MODEL, X_MODEL + MW, FLOW_X1)))
+
+
 def flow_pulses(i):
-    """Where along the flow path (0 = noise, 1 = the arrow's tip) each pulse is at frame i of a beat."""
+    """Time fraction (0..1 of its run) of each pulse in flight at frame i of a beat."""
     return [(i - s) / PULSE_TRAVEL for s in pulse_starts() if 0 <= i - s <= PULSE_TRAVEL]
 
 
 def ring_ages(i):
     """Ages (frames) of the adapter's rings at frame i of beat 2: a ring fires when a pulse passes under the dock."""
-    u_dock = (ADAPTER_X - FLOW_X0) / (FLOW_X1 - FLOW_X0)
-    ages = [i - (s + u_dock * PULSE_TRAVEL) for s in pulse_starts()]
+    tau_dock = float(np.interp(ADAPTER_X, (FLOW_X0, X_MODEL, X_MODEL + MW, FLOW_X1), FLOW_TAU))
+    ages = [i - (s + tau_dock * PULSE_TRAVEL) for s in pulse_starts()]
     return [a for a in ages if 0 <= a < PULSE_LIFE]
 
 
@@ -233,10 +240,9 @@ def snowflake(fig, cx, cy, r, color, sw, name='snowflake'):
                      cap='round', name=name)
 
 
-def frozen_model(fig, x, y, w, h, label, taper=TAPER, size=7.5, overlay=None):
+def frozen_model(fig, x, y, w, h, label, taper=TAPER, size=7.5):
     """Frozen model: white trapezoid (narrow side right) with broad light blue diagonal stripes, and a badge with a
-    snowflake on its top corner (the pale stripes alone would hide a pale snowflake). `overlay(fig)` draws between
-    the stripes and the label, so that a pulse runs over the stripes but under the name."""
+    snowflake on its top corner (the pale stripes alone would hide a pale snowflake)."""
     t = h * taper / 2
     pts = [(x, y), (x + w, y + t), (x + w, y + h - t), (x, y + h)]
     fig.path(pts, closed=True, fill=WHITE, stroke='none', effects=[shadow()], name='frozen body')
@@ -247,8 +253,6 @@ def frozen_model(fig, x, y, w, h, label, taper=TAPER, size=7.5, overlay=None):
     content = f'<defs><clipPath id="fc"><polygon points="{poly}"/></clipPath></defs><g clip-path="url(#fc)">{lines}</g>'
     fig.place(_svg_file('frost', x, y, w, h, content), x, y, w, h, name='frozen stripes')
     fig.path(pts, closed=True, fill='none', stroke=BLACK, sw=STYLE['outline'], name='frozen outline')
-    if overlay is not None:
-        overlay(fig)
     fig.text(x + w / 2 - 2, y + h / 2 + size * 0.36, label, size=size, font='rcm', justify='center')
     bx, by = x + w - 6, y + t + 1
     fig.ellipse(bx, by, 8, fill=WHITE, stroke=ICE_D, sw=0.9, effects=[shadow(0.7, opacity=30)], name='frozen badge')
@@ -300,11 +304,12 @@ def pulses(fig, ages):
 
 
 def draw_flow_pulses(fig, i, adapted, x_lo, x_hi):
-    """Small pulses that run from the noise through the model and along the arrow to the sample: a dot with a short
-    fading trail. Only the dots between x_lo and x_hi are drawn, so that the part inside the model can sit under the
-    model's label. With the adapter docked a pulse turns orange as it passes under it."""
+    """Small pulses that run from the noise behind the model and out along the arrow to the sample: a dot with a short
+    fading trail. Only the dots between x_lo and x_hi are drawn: the ones left of the model's right edge BEHIND the
+    model (its body hides them while they are inside), the rest in front of the arrow. With the adapter docked a
+    pulse turns orange as it passes under it."""
     for u in flow_pulses(i):
-        head = FLOW_X0 + (FLOW_X1 - FLOW_X0) * u
+        head = flow_x(u)
         vis = smooth(u / 0.1) * (1 - smooth((u - 0.88) / 0.12))       # fades in at the start, out on arrival
         if vis < 0.03:
             continue
@@ -375,15 +380,15 @@ def build(fig):
     time_axis(fig, t)
 
     fig.line(FLOW_X0, MID, X_MODEL, MID, sw=STYLE['arrow_sw'], name='noise into model')
-    inside = (lambda fg: draw_flow_pulses(fg, i, adapted, X_MODEL, X_MODEL + MW)) if tl.running else None
-    frozen_model(fig, X_MODEL, MID - MH / 2, MW, MH, 'DeFoG', overlay=inside)
+    if tl.running:
+        draw_flow_pulses(fig, i, adapted, -1e9, X_MODEL + MW)            # on the line, and BEHIND the model
+    frozen_model(fig, X_MODEL, MID - MH / 2, MW, MH, 'DeFoG')
     if tl.running and adapted:
         pulses(fig, ring_ages(i))
     adapter(fig, tl.a)
     fig.arrow([(X_MODEL + MW + 3, MID), (X_OUT, MID)], name='model to sample')
     if tl.running:
-        draw_flow_pulses(fig, i, adapted, -1e9, X_MODEL)                 # on the line into the model
-        draw_flow_pulses(fig, i, adapted, X_MODEL + MW, 1e9)             # on the arrow to the sample
+        draw_flow_pulses(fig, i, adapted, X_MODEL + MW, 1e9)             # out of the model, on the arrow
 
     # the evolving sample and its captions
     sample_slot(fig, tl, d, atom_types, noise_pos, finals)
