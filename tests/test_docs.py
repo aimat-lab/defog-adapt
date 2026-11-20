@@ -169,6 +169,19 @@ def test_the_command_checker_sees_the_commands_it_is_meant_to_check():
     assert list(example_commands(block)) == [("examples/a.py", '--one 1 --two "x"')]
 
 
+RECIPES = ROOT / "docs" / "reference" / "recipes.md"
+
+
+@pytest.mark.skipif(not RECIPES.exists(), reason="the site pages are not part of an installed wheel")
+def test_the_recipes_page_lists_every_recipe_and_only_real_ones():
+    """A recipe without a row is one nobody finds; a row without a recipe sends the reader to a missing page."""
+    text = RECIPES.read_text(encoding="utf-8")
+    listed = set(re.findall(r"\[`(\w+\.py)`\]\(" + re.escape(REPO) + r"/blob/main/examples/\1\)", text))
+    scripts = {p.name for p in (ROOT / "examples").glob("*.py") if not p.name.startswith("_")}
+    assert listed == scripts, (f"missing from docs/reference/recipes.md: {sorted(scripts - listed)}; "
+                               f"listed there but not in examples/: {sorted(listed - scripts)}")
+
+
 MAIN_CLASSES = ROOT / "docs" / "reference" / "main-classes.md"
 
 
