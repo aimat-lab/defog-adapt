@@ -13,7 +13,7 @@ target with small swappable **adapters**, inference-time **Feynman-Kac steering*
 fine-tuning**. Molecules are the validated domain, and only features with a recorded positive result are included
 ([what was left out, and why](docs/migration.md#what-was-removed)).
 
-## Installation
+## 📦 Installation
 
 ```bash
 pip install "defog-adapt[chem]"
@@ -44,7 +44,7 @@ which is not bundled because it caps numpy below 2.
 
 </details>
 
-## Quickstart
+## 🚀 Quickstart
 
 Everything here runs on a CPU, with no downloads and no checkpoints. This trains a toy DeFoG model and a logP
 adapter on a few dozen small molecules, then samples with the adapter steered toward two logP targets (about half a
@@ -57,21 +57,48 @@ from rdkit import Chem
 from rdkit.Chem import Crippen
 from torch_geometric.loader import DataLoader
 
-from defog_adapt.core import (AdaLNAdapter, AdapterComposition, AdapterModule, AdaptedSampler,
-                              ConditionBranch, DeFoGModel)
-from defog_adapt.domains.molecule import build_encoders, mol_to_smiles, pyg_data_to_mol, smiles_to_pyg_data
+from defog_adapt.core import (
+    AdaLNAdapter,
+    AdapterComposition,
+    AdapterModule,
+    AdaptedSampler,
+    ConditionBranch,
+    DeFoGModel,
+)
+from defog_adapt.domains.molecule import (
+    build_encoders,
+    mol_to_smiles,
+    pyg_data_to_mol,
+    smiles_to_pyg_data,
+)
 from defog_adapt.presets import ADAPTER_WEIGHT
 
-EPOCHS, N = 120, 64
+EPOCHS = 120  # training epochs, for the base model and again for the adapter
+N = 64        # molecules to sample per target
+
 pl.seed_everything(0)
 
 # A few dozen small molecules: enough to run the whole pipeline, far too few to be good.
-smiles = """CCO CCCO CCCCO CCCCCO CCN CCCN CCCCN CCOC CCCOC CCOCC CC(C)O CC(C)N CC(C)C CCC(C)C CC(=O)C CCC(=O)C
-CC(=O)O CCC(=O)O CC(=O)N NCCO NCCN OCCO OCCCO CNC CCNCC CN(C)C C1CCCCC1 C1CCCC1 C1CCNCC1 C1CCOCC1 OC1CCCCC1
-c1ccccc1 Cc1ccccc1 CCc1ccccc1 Oc1ccccc1 Nc1ccccc1 COc1ccccc1 c1ccncc1 Cc1ccncc1 OCc1ccccc1""".split()
+smiles = """
+    CCO CCCO CCCCO CCCCCO
+    CCN CCCN CCCCN
+    CCOC CCCOC CCOCC
+    CC(C)O CC(C)N CC(C)C CCC(C)C
+    CC(=O)C CCC(=O)C
+    CC(=O)O CCC(=O)O CC(=O)N
+    NCCO NCCN OCCO OCCCO
+    CNC CCNCC CN(C)C
+    C1CCCCC1 C1CCCC1 C1CCNCC1 C1CCOCC1 OC1CCCCC1
+    c1ccccc1 Cc1ccccc1 CCc1ccccc1 Oc1ccccc1 Nc1ccccc1 COc1ccccc1
+    c1ccncc1 Cc1ccncc1 OCc1ccccc1
+""".split()
 
-# Molecules become graphs (atoms and bonds as classes); each carries the property the adapter learns, logP.
-atom_enc, atom_dec, bond_enc, bond_dec = build_encoders(["C", "N", "O"], ["SINGLE", "DOUBLE", "TRIPLE"])
+# Molecules become graphs (atoms and bonds as classes).
+# Each graph carries the property the adapter learns: logP.
+atom_enc, atom_dec, bond_enc, bond_dec = build_encoders(
+    atom_types=["C", "N", "O"],
+    bond_types=["SINGLE", "DOUBLE", "TRIPLE"],
+)
 graphs = []
 for s in smiles:
     g = smiles_to_pyg_data(s, atom_enc, bond_enc, kekulize=True)
@@ -82,25 +109,49 @@ logp = torch.cat([g.cond for g in graphs])
 
 
 def fit(module):
-    pl.Trainer(max_epochs=EPOCHS, accelerator="cpu", logger=False, enable_progress_bar=False,
-               enable_model_summary=False, enable_checkpointing=False).fit(module, loader)
+    trainer = pl.Trainer(
+        max_epochs=EPOCHS,
+        accelerator="cpu",
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        enable_checkpointing=False,
+    )
+    trainer.fit(module, loader)
 
 
-base = DeFoGModel.from_dataloader(loader, n_layers=2, hidden_dim=32)      # 1. an unconditional DeFoG model
+# 1. An unconditional DeFoG model.
+base = DeFoGModel.from_dataloader(loader, n_layers=2, hidden_dim=32)
 fit(base)
 base.eval()
-adapter = AdaLNAdapter.for_base(base, cond_dim=1, cond_mean=[float(logp.mean())], cond_std=[float(logp.std())])
-fit(AdapterModule(base, adapter))                                         # 2. the base stays frozen: only the adapter trains
+
+# 2. The base stays frozen: only the adapter trains.
+adapter = AdaLNAdapter.for_base(
+    base,
+    cond_dim=1,
+    cond_mean=[float(logp.mean())],
+    cond_std=[float(logp.std())],
+)
+fit(AdapterModule(base, adapter))
 adapter.eval()
 
-for target in (0.0, 2.0):                                                 # 3. sample, steered toward a logP
+# 3. Sample, steered toward a logP target.
+for target in (0.0, 2.0):
     branch = ConditionBranch(adapter, torch.tensor([target]), ADAPTER_WEIGHT["logp"])
-    sampler = AdaptedSampler(base, AdapterComposition([branch], base=base), sample_steps=60)
+    composition = AdapterComposition([branch], base=base)
+    sampler = AdaptedSampler(base, composition, sample_steps=60)
     graphs_out = sampler.sample(N, device=torch.device("cpu"), show_progress=False)
+
+    # Decode the graphs back to molecules (None where a graph is not a molecule).
     decoded = [pyg_data_to_mol(g, atom_dec, bond_dec) for g in graphs_out]
-    found = [mol_to_smiles(m) for m in decoded if m is not None]          # None where the graph is not a molecule
-    values = [Crippen.MolLogP(Chem.MolFromSmiles(x)) for x in found if x]
-    print(f"target logP {target:.1f}: {len(values)}/{N} valid, mean logP {sum(values) / max(len(values), 1):.2f}, e.g. {found[:3]}")
+    found = [mol_to_smiles(m) for m in decoded if m is not None]
+    values = [Crippen.MolLogP(Chem.MolFromSmiles(smi)) for smi in found if smi]
+
+    mean_logp = sum(values) / max(len(values), 1)
+    print(
+        f"target logP {target:.1f}: {len(values)}/{N} valid, "
+        f"mean logP {mean_logp:.2f}, e.g. {found[:3]}"
+    )
 ```
 
 It prints one line per target, after some start-up messages from PyTorch Lightning (the details vary a little
@@ -113,7 +164,7 @@ target logP 2.0: 58/64 valid, mean logP 1.95, e.g. ['CCC(CC)CC', 'CC1CCC1C', 'CC
 
 **This is a wiring check, not a result.** The model is tiny and sees a few dozen molecules, so expect some odd ones
 among the samples; what it shows is the idea: one frozen base, and a small adapter that moves the samples toward the
-property you ask for. The same code at scale produced the numbers [below](#results-at-a-glance). For a tour of every
+property you ask for. The same code at scale produced the numbers [below](#-results-at-a-glance). For a tour of every
 building block (property head, size model, Feynman-Kac steering), run [`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)
 from a clone.
 
@@ -126,33 +177,59 @@ and the core of it is:
 
 ```python
 import torch
-from defog_adapt.core import (AdaLNAdapter, AdapterComposition, ConditionBranch, DeFoGModel,
-                              FeynmanKacSampler, LearnedPropertyEnergy, LearnedSizeDistribution,
-                              PropertyHead, StandardisedEnergy)
+
+from defog_adapt.core import (
+    AdaLNAdapter,
+    AdapterComposition,
+    ConditionBranch,
+    DeFoGModel,
+    FeynmanKacSampler,
+    LearnedPropertyEnergy,
+    LearnedSizeDistribution,
+    PropertyHead,
+    StandardisedEnergy,
+)
 from defog_adapt.data import zinc_reference
 from defog_adapt.domains import MoleculeDomain
 from defog_adapt.domains.molecule import build_encoders
 from defog_adapt.presets import ADAPTER_SAMPLING, ADAPTER_WEIGHT, FK_STEERING
 
-atom_enc, atom_dec, bond_enc, bond_dec = build_encoders(zinc_reference.ATOM_TYPES, zinc_reference.BOND_TYPES)
+atom_enc, atom_dec, bond_enc, bond_dec = build_encoders(
+    atom_types=zinc_reference.ATOM_TYPES,
+    bond_types=zinc_reference.BOND_TYPES,
+)
 domain = MoleculeDomain(atom_dec, bond_dec)
 
+# One frozen base, one file per property.
 base = DeFoGModel.load("base.ckpt")
-adapter = AdaLNAdapter.load("logp_adapter.ckpt")                     # one frozen base, one file per property
-head = PropertyHead.load("logp_head.ckpt")                           # the Feynman-Kac "ruler"
-size = LearnedSizeDistribution.load("logp_head_size.ckpt")           # P(n | target)
+adapter = AdaLNAdapter.load("logp_adapter.ckpt")
 
-target, std = 4.0, float(head.prop_std)
-composition = AdapterComposition(
-    [ConditionBranch(adapter, torch.tensor([target]), ADAPTER_WEIGHT["logp"])], base=base)
-energy = StandardisedEnergy([(LearnedPropertyEnergy(head, target, domain, atom_enc, bond_enc, scale=std), std)])
-sampler = FeynmanKacSampler(base, energy, composition=composition, **FK_STEERING, **ADAPTER_SAMPLING)
+# The Feynman-Kac "ruler", and the node counts drawn from P(n | target).
+head = PropertyHead.load("logp_head.ckpt")
+size = LearnedSizeDistribution.load("logp_head_size.ckpt")
+
+target = 4.0
+std = float(head.prop_std)
+
+branch = ConditionBranch(adapter, torch.tensor([target]), ADAPTER_WEIGHT["logp"])
+composition = AdapterComposition([branch], base=base)
+
+prop_energy = LearnedPropertyEnergy(head, target, domain, atom_enc, bond_enc, scale=std)
+energy = StandardisedEnergy([(prop_energy, std)])
+
+sampler = FeynmanKacSampler(
+    base,
+    energy,
+    composition=composition,
+    **FK_STEERING,
+    **ADAPTER_SAMPLING,
+)
 graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target))
 ```
 
 </details>
 
-## What is in it
+## 🧩 What is in it
 
 | | what it does | evidence |
 |---|---|---|
@@ -164,7 +241,7 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 | **Inpainting** (`InpaintingSampler`) | Freeze a substructure and grow the rest (RePaint-style). | *thin*: one demonstration |
 | **Spectrum energy** (`SpectrumEnergy`) | Steer toward IR bands, with a predictor you supply. | *thin*: see the caveats |
 
-## Results at a glance
+## 📊 Results at a glance
 
 <p align="center">
   <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of each arm, lower is better: 0.542 for the first adapter, 0.325 with cross-attention and Fourier features, 0.313 with learned node counts and 0.230 with Feynman-Kac steering. RL on the adapter instead of Feynman-Kac gives 0.281, and RL with Feynman-Kac 0.216, not significantly better than Feynman-Kac alone." width="760">
@@ -190,7 +267,7 @@ A re-measurement with `examples/steer_zinc.py` on 40 real validation targets rep
 (-0.082 against a recorded -0.083) at a different absolute level
 ([`docs/results.md`](docs/results.md#8-re-measured-here)).
 
-## Documentation
+## 📚 Documentation
 
 | | |
 |---|---|
@@ -203,7 +280,7 @@ A re-measurement with `examples/steer_zinc.py` on 40 real validation targets rep
 | [`examples/README.md`](examples/README.md) | the recipes, in pipeline order |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed in each release |
 
-## Citation, relationship to DeFoG and license
+## 📝 Citation, relationship to DeFoG and license
 
 The base model follows the upstream [DeFoG](https://github.com/qym7/DeFoG) implementation (Qin, Madeira,
 Thanou, Frossard; ICML 2025). Everything built on top of it here was developed in a research fork. This package is
@@ -237,7 +314,7 @@ papers behind each method. If you use it, please cite this package and the DeFoG
 
 MIT, see [`LICENSE`](LICENSE). The upstream copyright notice is retained.
 
-## Contributing
+## 🤝 Contributing
 
 Issues and pull requests are welcome; please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. It explains the one rule
 specific to this project (a feature needs a recorded positive result), how to run the tests and what the checks
