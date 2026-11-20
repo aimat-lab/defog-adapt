@@ -68,7 +68,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import decode_valid, label_graphs, property_fn, zinc_vocabulary  # noqa: E402
 
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, AdaptedSampler, AdapterComposition, ComposedSizeDistribution, ConditionBranch,
+    CrossAttentionAdapter, AdaptedSampler, AdapterComposition, ComposedSizeDistribution, ConditionBranch,
     DeFoGModel, FeynmanKacSampler, LearnedPropertyEnergy, LearnedSizeDistribution,
     MoleculePropertyEnergy, PropertyHead, SizeBranch, StandardisedEnergy,
 )
@@ -84,7 +84,7 @@ RDLogger.DisableLog("rdApp.*")
 class Steered:
     """One steered property: its adapter, the optional head and size model, and the target."""
     name: str
-    adapter: AdaLNAdapter
+    adapter: CrossAttentionAdapter
     head: Optional[PropertyHead]
     size_model: Optional[LearnedSizeDistribution]
     target: Optional[float]
@@ -260,7 +260,7 @@ def main() -> int:
     print(vocabulary.check_model(base, atom_types, bond_types, what=f"base {args.base}"))
     specs = []
     for k, name in enumerate(args.property):
-        adapter = AdaLNAdapter.load(args.adapter[k], device=device).eval()
+        adapter = CrossAttentionAdapter.load(args.adapter[k], device=device).eval()
         adapter.check_compatible(base)
         head = PropertyHead.load(args.head[k], device=device) if args.head else None
         size = (LearnedSizeDistribution.load(args.size[k], device=device)

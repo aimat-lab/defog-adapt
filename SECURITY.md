@@ -13,7 +13,7 @@ Only the latest release receives fixes. Until 1.0 the API can change between min
 
 ## Loading a checkpoint runs code
 
-`DeFoGModel.load`, `AdaLNAdapter.load`, `PropertyHead.load` and `LearnedSizeDistribution.load` call
+`DeFoGModel.load`, `CrossAttentionAdapter.load`, `PropertyHead.load` and `LearnedSizeDistribution.load` call
 `torch.load(..., weights_only=False)`, because the files carry configuration dictionaries, and **unpickling executes
 code**. Only load checkpoints you trust, and never one from an unknown source. This is how PyTorch checkpoints that
 hold Python objects work, so it is not a vulnerability in this package, but it is the thing to be careful with. The

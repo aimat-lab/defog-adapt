@@ -70,7 +70,7 @@ from _common import (  # noqa: E402
 )
 
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, AdaptedSampler, AdapterComposition, AdapterGDPOTrainer, ConditionBranch,
+    CrossAttentionAdapter, AdaptedSampler, AdapterComposition, AdapterGDPOTrainer, ConditionBranch,
     DeFoGModel, HeadPropertyMatchReward, LearnedSizeDistribution, PropertyHead,
     PropertyMatchReward, Sampler, WeightedSanityPropertyReward, head_predict_batch,
     make_condition_sampler,
@@ -299,7 +299,7 @@ def experiment(e: Experiment) -> None:
 
     base = DeFoGModel.load(e.BASE_CKPT, device="cpu").to(device).eval()
     assert base.cond_dim == 0, "expected an unconditional base"
-    adapter = AdaLNAdapter.load(e.ADAPTER_CKPT, device=device)
+    adapter = CrossAttentionAdapter.load(e.ADAPTER_CKPT, device=device)
     adapter.check_compatible(base)
     e.log(f"loaded the {e.PROPERTY} adapter from {e.ADAPTER_CKPT} (cond_dim={adapter.cond_dim})")
 

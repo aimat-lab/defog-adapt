@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(not EXAMPLES.is_dir(), reason="examples/ is not 
 
 from torch_geometric.data import Data  # noqa: E402
 
-from defog_adapt.core import AdaLNAdapter, DeFoGModel, PropertyHead, fit_size_model  # noqa: E402
+from defog_adapt.core import CrossAttentionAdapter, DeFoGModel, PropertyHead, fit_size_model  # noqa: E402
 from defog_adapt.data import zinc_reference  # noqa: E402
 from defog_adapt.domains.molecule import build_encoders, smiles_to_pyg_data  # noqa: E402
 
@@ -323,9 +323,9 @@ def assets(tmp_path_factory, vocab):
     mean, std = float(size.cond_mean.reshape(-1)[0]), float(size.cond_std.reshape(-1)[0])
     base = tiny_model(vocab)
     conditional = tiny_model(vocab, cond_dim=1)
-    film = AdaLNAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[mean], cond_std=[std], xattn_tokens=0,
+    film = CrossAttentionAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[mean], cond_std=[std], xattn_tokens=0,
                                  cond_fourier=0)
-    xattn = AdaLNAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[mean], cond_std=[std], xattn_tokens=4,
+    xattn = CrossAttentionAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[mean], cond_std=[std], xattn_tokens=4,
                                   xattn_dim=8, xattn_heads=2, cond_fourier=2)
     head = PropertyHead(len(vocab.atoms), len(vocab.bonds) + 1, hid=16, layers=2, prop_mean=mean, prop_std=std)
     paths = {name: str(root / f"{name}.ckpt") for name in ("base", "conditional", "film", "xattn", "head", "size")}

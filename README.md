@@ -68,7 +68,7 @@ from rdkit.Chem import Crippen
 from torch_geometric.loader import DataLoader
 
 from defog_adapt.core import (
-    AdaLNAdapter,
+    CrossAttentionAdapter,
     AdapterComposition,
     AdapterModule,
     AdaptedSampler,
@@ -136,7 +136,7 @@ fit(base)
 base.eval()
 
 # 2. The base stays frozen: only the adapter trains.
-adapter = AdaLNAdapter.for_base(
+adapter = CrossAttentionAdapter.for_base(
     base,
     cond_dim=1,
     cond_mean=[float(logp.mean())],
@@ -189,7 +189,7 @@ and the core of it is:
 import torch
 
 from defog_adapt.core import (
-    AdaLNAdapter,
+    CrossAttentionAdapter,
     AdapterComposition,
     ConditionBranch,
     DeFoGModel,
@@ -212,7 +212,7 @@ domain = MoleculeDomain(atom_dec, bond_dec)
 
 # One frozen base, one file per property.
 base = DeFoGModel.load("base.ckpt")
-adapter = AdaLNAdapter.load("logp_adapter.ckpt")
+adapter = CrossAttentionAdapter.load("logp_adapter.ckpt")
 
 # The Feynman-Kac "ruler", and the node counts drawn from P(n | target).
 head = PropertyHead.load("logp_head.ckpt")
@@ -243,7 +243,7 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 
 | | what it does | evidence |
 |---|---|---|
-| **Frozen-base adapters** (`AdaLNAdapter`, `AdapterModule`, `AdapterComposition`) | A small conditional adapter over a frozen unconditional base: swappable (one file per property) and composable (two properties multiply). Node cross-attention and Fourier bands on the condition. | logP, QED, TPSA and SAScore on ZINC250k; joint logP + QED; Morgan fingerprints |
+| **Frozen-base adapters** (`CrossAttentionAdapter`, `AdapterModule`, `AdapterComposition`) | A small conditional adapter over a frozen unconditional base: swappable (one file per property) and composable (two properties multiply). Node cross-attention and Fourier bands on the condition. | logP, QED, TPSA and SAScore on ZINC250k; joint logP + QED; Morgan fingerprints |
 | **Learned size model** (`LearnedSizeDistribution`) | Draw the node count from `P(n \| target)` instead of the dataset marginal. | -0.0103 logP and -0.0058 QED error |
 | **Feynman-Kac steering** (`FeynmanKacSampler`, `StandardisedEnergy`, `PropertyHead`) | Inference-time particle steering toward a target, scored by a learned property head, with a dimensionless `beta`. | the largest single lever measured: logP 0.3132 to 0.2299 |
 | **GDPO fine-tuning** (`GDPOTrainer`, `AdapterGDPOTrainer`) | Policy-gradient RL on the base (fewer fragments, odd rings) or on an adapter (tighter conditioning). | -13.6% logP and -19.5% QED with validity up; structural RL on ZINC |

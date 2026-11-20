@@ -14,7 +14,7 @@ import pytest
 import torch
 from torch_geometric.loader import DataLoader
 
-from defog_adapt.core import AdaLNAdapter, AdapterModule, DeFoGModel
+from defog_adapt.core import CrossAttentionAdapter, AdapterModule, DeFoGModel
 from defog_adapt.domains.molecule import build_encoders, smiles_to_pyg_data
 
 SMILES = ["CCO", "CCNC", "CC", "CNOCC", "OCC", "NCCO"]
@@ -32,7 +32,7 @@ def build(cond_attr="cond", n_layers=2):
         loader, n_layers=n_layers, hidden_dim=32, hidden_mlp_dim=64, n_heads=2, dropout=0.0,
         noise_type="marginal", extra_features_type="rrwp", rrwp_steps=3, molecular_features=False)
     base.eval()
-    adapter = AdaLNAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[3.5], cond_std=[1.0])
+    adapter = CrossAttentionAdapter.for_base(base, cond_dim=1, hidden=16, cond_mean=[3.5], cond_std=[1.0])
     return base, adapter, loader
 
 

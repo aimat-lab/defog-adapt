@@ -60,7 +60,7 @@ from rdkit import RDLogger  # noqa: E402
 
 import defog_adapt  # noqa: E402
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, DeFoGModel, LearnedSizeDistribution, PropertyHead, Sampler,
+    CrossAttentionAdapter, DeFoGModel, LearnedSizeDistribution, PropertyHead, Sampler,
 )
 from defog_adapt.data import vocabulary  # noqa: E402
 from defog_adapt.domains import MoleculeDomain  # noqa: E402
@@ -369,7 +369,7 @@ def run_command(args) -> int:
             files.update(conditional=args.conditional, conditional_stats=str(stats_path))
         else:
             path, weight = (args.film, args.film_weight) if arm == "film" else (args.xattn, args.xattn_weight)
-            adapter = AdaLNAdapter.load(path, device=device).eval()
+            adapter = CrossAttentionAdapter.load(path, device=device).eval()
             adapter.check_compatible(base)
             head = PropertyHead.load(args.head, device=device) if arm == "xattn_fk" else None
             spec = Steered(name=PROPERTY, adapter=adapter, head=head, size_model=size, target=None,

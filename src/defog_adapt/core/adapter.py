@@ -1,5 +1,5 @@
 """
-Frozen-base AdaLN/FiLM CFG-adapters for DeFoG.
+Frozen-base cross-attention / gated-FiLM (adaLN-Zero style) CFG-adapters for DeFoG.
 
 Localize classifier-free guidance to a small, swappable, stackable adapter on a
 FROZEN unconditional base (ControlNet / T2I-Adapter / IP-Adapter family), instead
@@ -7,7 +7,7 @@ of retraining the base per condition. See ``docs/adapters.md``.
 
 Mechanism
 ---------
-* The base ``DeFoGModel`` (``cond_dim=0``) is frozen. An :class:`AdaLNAdapter`
+* The base ``DeFoGModel`` (``cond_dim=0``) is frozen. A :class:`CrossAttentionAdapter`
   reads a condition ``c`` and emits, per transformer layer, a gated-FiLM
   modulation ``{scale, shift, gate}`` for the node (X), edge (E) and global (y)
   hidden streams. The modulation is a **gated residual** applied to each frozen
@@ -60,7 +60,7 @@ DEFAULT_XATTN_DIM = 128
 DEFAULT_XATTN_HEADS = 16
 DEFAULT_COND_FOURIER = 3
 
-# Accepted keys of AdaLNAdapter.__init__, used by from_config to ignore extras rather
+# Accepted keys of CrossAttentionAdapter.__init__, used by from_config to ignore extras rather
 # than raise on a config written by a newer version.
 _CONFIG_KEYS = frozenset({
     "cond_dim", "n_layers", "dims", "hidden", "time_conditioned", "streams",
@@ -255,7 +255,7 @@ class NodeConditionCrossAttention(nn.Module):
         """``X`` (B,n,dx), ``tokens`` (B,m,d_tok) -> delta (B,n,dx)."""
         B, n, _ = X.shape
         if tokens.dim() == 3 and tokens.size(1) < 2:
-            # The AdaLNAdapter-level guard covers the normal path, but this module can be
+            # The CrossAttentionAdapter-level guard covers the normal path, but this module can be
             # constructed directly: softmax over a single key is identically 1.0, so every
             # node gets the same value and the query path receives no gradient.
             raise ValueError(
@@ -281,7 +281,7 @@ class NodeConditionCrossAttention(nn.Module):
         # QUERY rows are zeroed by the caller's x_mask, same as the FiLM delta.
 
 # ===========================================================================
-# AdaLNAdapter: c -> per-layer modulation
+# CrossAttentionAdapter: c -> per-layer modulation
 # ===========================================================================
 def _base_token(base) -> float:
     """A cheap, stable identity token for a frozen base (to catch hot-swapping an
@@ -354,12 +354,18 @@ class FingerprintEncoder(nn.Module):
 _COND_ENCODERS = {"mlp": FingerprintEncoder}
 
 
-class AdaLNAdapter(nn.Module):
-    """Zero-init gated-FiLM adapter over a FROZEN base's transformer stack.
+class CrossAttentionAdapter(nn.Module):
+    """Zero-init gated-FiLM adapter, with node-to-condition cross-attention, over a FROZEN base's transformer stack.
 
     Maps a condition ``c`` (+ optionally the flow-time ``t``) to per-layer
     ``{scale, shift, gate}`` for the enabled streams. Exact no-op at init (gate
     heads zero-initialized) -> the base is reproduced bit-for-bit.
+
+    The name is the recorded architecture (``defog_adapt.presets.ADAPTER_ARCHITECTURE``): a gated-FiLM trunk, plus
+    cross-attention from every node to the condition (the half that carries the effect), plus Fourier bands on the
+    condition. ``xattn_tokens=0`` and ``cond_fourier=0`` switch the last two off and give the original FiLM-only
+    adapter, which ``docs/results.md`` measures as an arm of its own. The research fork called this class
+    ``AdaLNAdapter``; that name is kept as an alias (below), and no checkpoint stores a class name.
     """
 
     def __init__(self, cond_dim: int, n_layers: int, dims: Dict[str, int],
@@ -492,7 +498,7 @@ class AdaLNAdapter(nn.Module):
 
     # --- construction helper ------------------------------------------------
     @classmethod
-    def for_base(cls, base, cond_dim: int, **kw) -> "AdaLNAdapter":
+    def for_base(cls, base, cond_dim: int, **kw) -> "CrossAttentionAdapter":
         """Build an adapter matching ``base``'s transformer dims (read from the live
         module) and layer count, in the CURRENT DEFAULT ARCHITECTURE.
 
@@ -600,7 +606,7 @@ class AdaLNAdapter(nn.Module):
         return self._config()
 
     @classmethod
-    def from_config(cls, config: dict, state_dict: dict, device="cpu") -> "AdaLNAdapter":
+    def from_config(cls, config: dict, state_dict: dict, device="cpu") -> "CrossAttentionAdapter":
         """Rebuild an adapter from a ``config()`` dict and a separately-stored state dict.
 
         The counterpart to :meth:`config`, for callers that keep tensors and
@@ -627,7 +633,7 @@ class AdaLNAdapter(nn.Module):
         return path
 
     @classmethod
-    def load(cls, path, device="cpu") -> "AdaLNAdapter":
+    def load(cls, path, device="cpu") -> "CrossAttentionAdapter":
         if not path.endswith(".ckpt"):
             path = path + ".ckpt"
         ck = torch.load(path, map_location=device, weights_only=False)
@@ -645,6 +651,11 @@ class AdaLNAdapter(nn.Module):
         return a.to(device)
 
 
+#: The research fork's name for :class:`CrossAttentionAdapter`. Kept as an alias so that code written against the
+#: fork, and its migration guide, keep working: it is the same class, not a subclass or a copy.
+AdaLNAdapter = CrossAttentionAdapter
+
+
 # ===========================================================================
 # Composition
 # ===========================================================================
@@ -656,7 +667,7 @@ class ConditionBranch:
     The default is 2.0, the measured optimum for logP and QED. Branches are blended in
     probability space (see :class:`AdapterComposition`), which is what makes w>1 usable at all.
     """
-    adapter: AdaLNAdapter
+    adapter: CrossAttentionAdapter
     condition: torch.Tensor
     weight: float = 2.0
 
@@ -747,7 +758,7 @@ class AdapterModule(_FrozenBaseModule):
     a direct conditional denoiser ``p(x1|x_t,c)``. The base is frozen and kept out of the
     checkpoints by :class:`_FrozenBaseModule`."""
 
-    def __init__(self, base, adapter: AdaLNAdapter, cond_attr: str = "cond", lr: float = 2e-4):
+    def __init__(self, base, adapter: CrossAttentionAdapter, cond_attr: str = "cond", lr: float = 2e-4):
         super().__init__()
         self._freeze_base(base)
         self.adapter = adapter

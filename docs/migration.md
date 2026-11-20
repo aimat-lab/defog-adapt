@@ -11,6 +11,7 @@ affects you if you are starting fresh.
 | PyPI distribution | (not published) | `defog-adapt` |
 | import name | `defog` | `defog_adapt` |
 | experiment helpers | `experiments.utils` | `defog_adapt.domains.molecule` |
+| the adapter class | `AdaLNAdapter` | `CrossAttentionAdapter` (`AdaLNAdapter` stays importable: the same class) |
 
 The distribution on PyPI called `defog` is an **unrelated** project (a text-to-SQL client); the import name
 changed too so that the two can be installed side by side. Their top-level modules do not overlap.
@@ -21,7 +22,7 @@ from defog.core import DeFoGModel, AdaLNAdapter, FeynmanKacSampler
 from defog.domains.molecule import smiles_to_pyg_data
 from experiments.utils import build_encoders
 # after
-from defog_adapt.core import DeFoGModel, AdaLNAdapter, FeynmanKacSampler
+from defog_adapt.core import DeFoGModel, CrossAttentionAdapter, FeynmanKacSampler
 from defog_adapt.domains.molecule import smiles_to_pyg_data, build_encoders
 ```
 
@@ -56,7 +57,7 @@ Removed **options** on classes that were kept:
 
 | class | removed argument | note |
 |---|---|---|
-| `AdaLNAdapter` | `interior_ff`, `interior_attn` | interior conditioning, superseded by node cross-attention (see below) |
+| `CrossAttentionAdapter` (`AdaLNAdapter` in the fork) | `interior_ff`, `interior_attn` | interior conditioning, superseded by node cross-attention (see below) |
 | `AdapterComposition` | `blend_space`, `guide` | only probability-space blending is kept: rate-space blending was numerically broken above weight 1 |
 | `AdapterModule` | `cond_drop_prob`, `l10_lr_scale` | condition dropout (recorded value 0) and the interior-head learning-rate scale |
 | `FeynmanKacSampler` | `rejuvenate`, `jump_length`, `proposal_transform`, `constraint`, `n_free` | rejuvenation was dominated; `beta` is now a plain number (beta schedules were dominated). Inpainting is `InpaintingSampler`. |
@@ -81,7 +82,7 @@ as before; use `presets.E1_MODEL`.
 
 * **Base models** saved by the research fork load with `DeFoGModel.load`. The golden test does exactly this
   with real checkpoints.
-* **Adapters** load with `AdaLNAdapter.load` unless they enable an interior feature or use the spectrum
+* **Adapters** load with `CrossAttentionAdapter.load` (or `AdaLNAdapter.load`, its name in the fork) unless they enable an interior feature or use the spectrum
   condition encoder; those raise an error that names the feature, rather than loading a different model. Load
   them with the research package.
 * **Heads and size models** (`PropertyHead`, `LearnedSizeDistribution`) load as before.

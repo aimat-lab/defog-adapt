@@ -783,7 +783,7 @@ class AdapterGDPOTrainer(GDPOTrainer):
         return {"loss": pg_loss, "kl": kl_val, "grad_norm": float(gnorm)}
 
     def save(self, path: str, use_ema: bool = True) -> str:
-        """Save the RL'd ADAPTER (loads with AdaLNAdapter.load)."""
+        """Save the RL'd ADAPTER (loads with CrossAttentionAdapter.load)."""
         if use_ema and self.ema is not None:
             backup = {k: v.detach().clone() for k, v in self.adapter.state_dict().items()}
             self.ema.copy_to(self.adapter)

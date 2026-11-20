@@ -69,10 +69,10 @@ def _recorder(sampler_cls):
 
 
 def load_models(base_path, adapter_path, device):
-    from defog_adapt.core import AdaLNAdapter, DeFoGModel
+    from defog_adapt.core import CrossAttentionAdapter, DeFoGModel
 
     base = DeFoGModel.load(base_path, device="cpu").to(device).eval()
-    adapter = AdaLNAdapter.load(adapter_path, device=device).eval()
+    adapter = CrossAttentionAdapter.load(adapter_path, device=device).eval()
     adapter.check_compatible(base)
     return base, adapter
 

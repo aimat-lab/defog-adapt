@@ -8,7 +8,7 @@ Import name `defog_adapt`. Code only: no model weights ship.
 
 ### Included
 
-- **Frozen-base adapters**: `AdaLNAdapter` (gated FiLM, node-to-condition cross-attention, Fourier bands on
+- **Frozen-base adapters**: `CrossAttentionAdapter` (gated FiLM, node-to-condition cross-attention, Fourier bands on
   the condition, an encoder for high-dimensional conditions), `AdapterModule`, `AdapterComposition`
   (product or mean of probability-space marginals), `AdaptedSampler`.
 - **Learned node counts**: `LearnedSizeDistribution`, `ComposedSizeDistribution`, `fit_size_model`.
@@ -36,6 +36,8 @@ Import name `defog_adapt`. Code only: no model weights ship.
 ### Changed relative to the research fork
 
 - Import name `defog` to `defog_adapt`; experiment helpers now live in `defog_adapt.domains.molecule`.
+- `AdaLNAdapter` is now `CrossAttentionAdapter`, the name of the recorded architecture. The old name is an alias of
+  the same class, so fork code and every adapter checkpoint (which stores no class name) keep working.
 - Trainer defaults are the recorded recipes, and `AdapterGDPOTrainer(rollout_weight=...)` is **required**.
 - Only probability-space guidance blending remains (rate-space blending was numerically broken above weight 1).
 - `MoleculeDomain.encode` encodes an aromatic core in Kekule form when the vocabulary is kekulized.

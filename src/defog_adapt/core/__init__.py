@@ -73,7 +73,8 @@ from .rate_matrix import RateMatrixDesigner
 from .sampler import Sampler, InpaintingSampler, AdaptedSampler
 from .adapter import (
     Modulation,
-    AdaLNAdapter,
+    CrossAttentionAdapter,
+    AdaLNAdapter,                      # the research fork's name: an alias of the same class
     FingerprintEncoder,
     NodeConditionCrossAttention,
     ConditionBranch,
@@ -151,6 +152,7 @@ __all__ = [
     "InpaintingSampler",
     "AdaptedSampler",
     "Modulation",
+    "CrossAttentionAdapter",
     "AdaLNAdapter",
     "FingerprintEncoder",
     "NodeConditionCrossAttention",

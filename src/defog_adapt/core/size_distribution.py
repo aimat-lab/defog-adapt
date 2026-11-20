@@ -22,7 +22,7 @@ from a :class:`SizeDistribution`. This can be:
 condition in whatever space their stored training conditions were in, and ignore it
 entirely if they are conditioning-unaware. :class:`LearnedSizeDistribution` instead
 takes the **RAW** condition and normalizes internally from its own buffers, matching
-the convention :class:`~defog_adapt.core.adapter.AdaLNAdapter` and ``ConditionBranch``
+the convention :class:`~defog_adapt.core.adapter.CrossAttentionAdapter` and ``ConditionBranch``
 already use. Prefer that convention for anything new: "the caller normalizes" is how
 a target ends up normalized twice, or by the wrong statistics.
 """
@@ -364,7 +364,7 @@ class LearnedSizeDistribution(nn.Module, SizeDistribution):
       :class:`ConditionalSizeDistribution` implements no ``log_prob`` at all, which is
       why it cannot be composed.)
     * **The condition arrives RAW and is normalized inside**, from the ``cond_mean`` /
-      ``cond_std`` buffers, exactly as :meth:`AdaLNAdapter.normalize` does. Pair this
+      ``cond_std`` buffers, exactly as :meth:`CrossAttentionAdapter.normalize` does. Pair this
       model with an adapter via :meth:`check_compatible` rather than trusting a caller
       to have applied the right statistics.
     * **Sizes with zero marginal mass stay at probability zero**, at fit time and at

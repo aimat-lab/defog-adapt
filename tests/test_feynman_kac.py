@@ -113,12 +113,12 @@ def test_every_scheme_runs_and_returns_all_particles(small_model, scheme):
 def test_a_composition_is_scored_through_the_adapter_not_the_bare_base(small_model):
     """With an adapter composition as the proposal, the reward must be evaluated on the
     ADAPTER-conditioned prediction. Count how often the adapter's modulation is requested."""
-    from defog_adapt.core import AdaLNAdapter, AdapterComposition, ConditionBranch
+    from defog_adapt.core import CrossAttentionAdapter, AdapterComposition, ConditionBranch
 
     base = small_model.eval()
     for p in base.parameters():
         p.requires_grad_(False)
-    adapter = AdaLNAdapter.for_base(base, cond_dim=1, hidden=16).eval()
+    adapter = CrossAttentionAdapter.for_base(base, cond_dim=1, hidden=16).eval()
     calls = []
     real_forward = adapter.forward
 

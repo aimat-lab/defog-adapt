@@ -62,7 +62,7 @@ from _common import (  # noqa: E402
 )
 
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, AdaptedSampler, AdapterComposition, AdapterModule, ConditionBranch, DeFoGModel,
+    CrossAttentionAdapter, AdaptedSampler, AdapterComposition, AdapterModule, ConditionBranch, DeFoGModel,
     Sampler,
 )
 from defog_adapt.data import vocabulary, zinc_reference  # noqa: E402
@@ -252,7 +252,7 @@ def experiment(e: Experiment) -> None:
     # nothing in between to notice, so check it here.
     e.log(vocabulary.check_model(base, atom_types, bond_types, what=f"base {e.BASE_CKPT}"))
 
-    adapter = AdaLNAdapter.for_base(
+    adapter = CrossAttentionAdapter.for_base(
         base, cond_dim=1, hidden=e.H_HIDDEN, time_conditioned=e.TIME_CONDITIONED,
         streams=tuple(e.STREAMS), cond_mean=[cond_mean], cond_std=[cond_std],
         cond_fourier=e.COND_FOURIER, xattn_tokens=e.XATTN_TOKENS, xattn_dim=e.XATTN_DIM,

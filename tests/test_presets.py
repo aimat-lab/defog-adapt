@@ -10,7 +10,7 @@ import torch
 
 import defog_adapt
 from defog_adapt.core import (
-    AdaLNAdapter, AdapterGDPOTrainer, DeFoGModel, FeynmanKacSampler, GDPOTrainer, Sampler,
+    CrossAttentionAdapter, AdapterGDPOTrainer, DeFoGModel, FeynmanKacSampler, GDPOTrainer, Sampler,
 )
 from defog_adapt.presets import (
     ADAPTER_ARCHITECTURE, ADAPTER_RL_TRAINER, ADAPTER_SAMPLING, ADAPTER_TRAINING, ADAPTER_WEIGHT,
@@ -95,7 +95,7 @@ def test_the_trainer_presets_agree_with_the_defaults_they_restate():
 
 
 def test_the_adapter_presets_are_arguments_the_adapter_and_sampler_accept():
-    assert set(ADAPTER_ARCHITECTURE) <= set(_params(AdaLNAdapter.__init__))
+    assert set(ADAPTER_ARCHITECTURE) <= set(_params(CrossAttentionAdapter.__init__))
     assert set(ADAPTER_SAMPLING) <= set(_params(Sampler.__init__))
     assert set(FK_STEERING) <= set(_params(FeynmanKacSampler.__init__))
     assert set(ADAPTER_TRAINING) == {"epochs", "batch_size", "lr", "grad_clip"}
@@ -121,8 +121,8 @@ def test_the_adapter_preset_rebuilds_the_recorded_adapter_exactly():
         pytest.skip("set DEFOG_ADAPT_CKPTS to a directory with zinc_kek_base.ckpt and "
                     "logp_xattn_adapter.ckpt")
     base = DeFoGModel.load(str(base_path), device="cpu")
-    stored = AdaLNAdapter.load(str(adapter_path), device="cpu")
-    built = AdaLNAdapter.for_base(base, cond_dim=1, cond_mean=[0.0], cond_std=[1.0],
+    stored = CrossAttentionAdapter.load(str(adapter_path), device="cpu")
+    built = CrossAttentionAdapter.for_base(base, cond_dim=1, cond_mean=[0.0], cond_std=[1.0],
                                   **ADAPTER_ARCHITECTURE)
     shapes = lambda m: {k: tuple(v.shape) for k, v in m.state_dict().items()}
     assert shapes(built) == shapes(stored)

@@ -39,11 +39,11 @@ to its weights.
 ## Building and training one
 
 ```python
-from defog_adapt.core import AdaLNAdapter, AdapterModule, DeFoGModel
+from defog_adapt.core import CrossAttentionAdapter, AdapterModule, DeFoGModel
 from defog_adapt.presets import ADAPTER_ARCHITECTURE
 
 base = DeFoGModel.load("base.ckpt")                       # frozen below; must be unconditional
-adapter = AdaLNAdapter.for_base(
+adapter = CrossAttentionAdapter.for_base(
     base, cond_dim=1, cond_mean=[mean], cond_std=[std],   # the property's statistics, in the label
     name="logp_adapter", cond_type="logp",                # convention you will deploy under
     **ADAPTER_ARCHITECTURE)
@@ -140,7 +140,7 @@ graphs = AdaptedSampler(base, composition, sample_steps=500, eta=25.0, omega=0.0
 ## File format, compatibility and trust
 
 `adapter.save(path)` writes `{"state_dict": ..., "config": ...}` to `path + ".ckpt"`, and
-`AdaLNAdapter.load(path)` rebuilds the architecture from the config and loads the weights (including the
+`CrossAttentionAdapter.load(path)` rebuilds the architecture from the config and loads the weights (including the
 `cond_mean` and `cond_std` buffers). Loading is strict, and **a config that asks for something this package
 does not have raises instead of loading a different model**:
 
@@ -151,7 +151,7 @@ does not have raises instead of loading a different model**:
 
 Load such adapters with the research package they were trained in.
 
-**Checkpoints are pickles.** `DeFoGModel.load`, `AdaLNAdapter.load`, `PropertyHead.load` and
+**Checkpoints are pickles.** `DeFoGModel.load`, `CrossAttentionAdapter.load`, `PropertyHead.load` and
 `LearnedSizeDistribution.load` call `torch.load(..., weights_only=False)`, because the files carry
 configuration dictionaries and hyperparameters. Unpickling executes code, so **only load checkpoints you
 trust**, exactly as you would for any `.pt` file from the internet.

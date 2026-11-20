@@ -45,9 +45,9 @@ def _build_model(cfg, node_counts):
 
 
 def _build_adapter(base):
-    from defog_adapt.core.adapter import AdaLNAdapter
+    from defog_adapt.core.adapter import CrossAttentionAdapter
     torch.manual_seed(SEED + 1)
-    a = AdaLNAdapter.for_base(base, cond_dim=2, time_conditioned=True)
+    a = CrossAttentionAdapter.for_base(base, cond_dim=2, time_conditioned=True)
     with torch.no_grad():                 # off the zero-init no-op
         for p in a.parameters():
             p.add_(0.2 * torch.randn_like(p))
