@@ -38,6 +38,7 @@ to its weights.
 
 ## Building and training one
 
+<!-- --8<-- [start:train_adapter] -->
 ```python
 from defog_adapt.core import CrossAttentionAdapter, AdapterModule, DeFoGModel
 from defog_adapt.presets import ADAPTER_ARCHITECTURE
@@ -51,6 +52,7 @@ module = AdapterModule(base, adapter, cond_attr="cond", lr=4e-4)   # freezes the
 trainer.fit(module, loader)        # each graph carries its RAW condition as a (1, 1) tensor in `.cond`
 adapter.save("logp_adapter")       # writes logp_adapter.ckpt
 ```
+<!-- --8<-- [end:train_adapter] -->
 
 `for_base` builds the recorded architecture by default (cross-attention 64 by 128 by 16, three Fourier bands
 where they are legal) and stamps the adapter with a fingerprint of its base; `ADAPTER_ARCHITECTURE` states the

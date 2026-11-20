@@ -17,6 +17,9 @@ venv/
 # Local working area (scratch output, logs); never committed
 .work/
 
+# The built documentation site (`mkdocs build`)
+/site/
+
 # Never commit weights, datasets or experiment output. Checkpoints are not distributed with the
 # package; the parity tests read them from $DEFOG_ADAPT_CKPTS.
 *.ckpt
