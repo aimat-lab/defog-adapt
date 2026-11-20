@@ -44,6 +44,16 @@ which is not bundled because it caps numpy below 2.
 
 </details>
 
+## 📊 Results at a glance
+
+<p align="center">
+  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of each arm, lower is better: 0.542 for the first adapter, 0.325 with cross-attention and Fourier features, 0.313 with learned node counts and 0.230 with Feynman-Kac steering. RL on the adapter instead of Feynman-Kac gives 0.281, and RL with Feynman-Kac 0.216, not significantly better than Feynman-Kac alone." width="760">
+</p>
+
+Feynman-Kac steering costs sample diversity (uniqueness about 0.76, against 1.0 without it). Every number, its
+protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
+[`docs/caveats.md`](docs/caveats.md).
+
 ## 🚀 Quickstart
 
 Everything here runs on a CPU, with no downloads and no checkpoints. This trains a toy DeFoG model and a logP
@@ -164,7 +174,7 @@ target logP 2.0: 58/64 valid, mean logP 1.95, e.g. ['CCC(CC)CC', 'CC1CCC1C', 'CC
 
 **This is a wiring check, not a result.** The model is tiny and sees a few dozen molecules, so expect some odd ones
 among the samples; what it shows is the idea: one frozen base, and a small adapter that moves the samples toward the
-property you ask for. The same code at scale produced the numbers [below](#-results-at-a-glance). For a tour of every
+property you ask for. The same code at scale produced the numbers [above](#-results-at-a-glance). For a tour of every
 building block (property head, size model, Feynman-Kac steering), run [`examples/quickstart_cpu.py`](examples/quickstart_cpu.py)
 from a clone.
 
@@ -240,32 +250,6 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 | **Kekulized molecular representation** | Dropping the aromatic bond class makes a whole kind of validity failure impossible. | MOSES validity 0.884 to 0.991 |
 | **Inpainting** (`InpaintingSampler`) | Freeze a substructure and grow the rest (RePaint-style). | *thin*: one demonstration |
 | **Spectrum energy** (`SpectrumEnergy`) | Steer toward IR bands, with a predictor you supply. | *thin*: see the caveats |
-
-## 📊 Results at a glance
-
-<p align="center">
-  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of each arm, lower is better: 0.542 for the first adapter, 0.325 with cross-attention and Fourier features, 0.313 with learned node counts and 0.230 with Feynman-Kac steering. RL on the adapter instead of Feynman-Kac gives 0.281, and RL with Feynman-Kac 0.216, not significantly better than Feynman-Kac alone." width="760">
-</p>
-
-ZINC250k, logP, the FreeGress protocol (**100 targets from real molecules, 10 generations each**; error between
-the target and the decoded property; validation). Lower is better, and the run-to-run noise floor is about 0.011.
-Each row adds to the one above it, except the last two.
-
-| arm | logP error |
-|---|---|
-| the first adapter (FiLM only) | 0.5420 |
-| cross-attention + Fourier adapter | 0.3250 |
-| + learned node counts | 0.3132 |
-| + Feynman-Kac (`beta` 20) | **0.2299** |
-| *instead of FK:* + RL on the adapter | 0.2807 |
-| *RL and FK together* | 0.2157 (not significantly better than FK alone) |
-
-Validity stays at 0.97 or above in the recorded runs. Feynman-Kac costs diversity (uniqueness about 0.76, against
-1.0 without it), and the RL gain does **not** add to it. Every number, its protocol and its uncertainty are in
-[`docs/results.md`](docs/results.md); what they do *not* support is in [`docs/caveats.md`](docs/caveats.md).
-A re-measurement with `examples/steer_zinc.py` on 40 real validation targets reproduced the Feynman-Kac effect
-(-0.082 against a recorded -0.083) at a different absolute level
-([`docs/results.md`](docs/results.md#8-re-measured-here)).
 
 ## 📚 Documentation
 
