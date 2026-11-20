@@ -13,6 +13,7 @@ recorded result, and each of them runs.
 | [`fit_property_head__zinc.py`](fit_property_head__zinc.py) | Fit the property head (the Feynman-Kac ruler and RL reward) and the learned size model. A plain script. | `defog-adapt[chem]`, a base checkpoint |
 | [`adapter_rl_finetune__zinc.py`](adapter_rl_finetune__zinc.py) | Tighten a trained adapter by policy gradient (PyComex). | PyComex, base + adapter (+ head, size model) |
 | [`steer_zinc.py`](steer_zinc.py) | **The assembly**: adapters + learned sizes + Feynman-Kac + decoding, and an evaluation mode. A plain script. | `defog-adapt[chem]`, the parts above |
+| [`compare_arms__zinc.py`](compare_arms__zinc.py) | **The comparison behind the README's results figure**: the unconditional base, the end-to-end conditional model, the FiLM and the cross-attention adapter, and Feynman-Kac, on one logP benchmark and several seeds. A plain script. | `defog-adapt[chem]`, the parts above |
 | [`_common.py`](_common.py) | The shared helpers: property functions, the ZINC vocabulary, labelled graphs. | |
 
 ## The pipeline, in order
@@ -35,6 +36,8 @@ training__e1.py ─▶ rl_sanity__zinc.py (×2) ─▶ adapter_training__zinc.py
 3. **Train an adapter** per property (`adapter_training__zinc.py`), then a **head and size model** for it
    (`fit_property_head__zinc.py --with-size-model`) using the *same* `--property-from` convention.
 4. **Steer** with `steer_zinc.py`, or fine-tune the adapter further with `adapter_rl_finetune__zinc.py`.
+5. **Compare** the ways of conditioning on one benchmark with `compare_arms__zinc.py`: validation first, to choose the
+   guidance weights; then the held-out test split once, with them frozen.
 
 ## Running them
 

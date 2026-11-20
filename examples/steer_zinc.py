@@ -178,10 +178,17 @@ def read_properties(graphs, specs, atom_dec, bond_dec):
     return out
 
 
-def evaluation_targets(specs, k, seed, data_root, atom_enc, bond_enc, atom_dec, bond_dec):
-    """``k`` target tuples read off real validation molecules (their DECODED property values), so
-    every target is one that some molecule actually achieves."""
-    pool = list(zinc_reference.load_reference_split(data_root).val_smiles)
+def evaluation_targets(specs, k, seed, data_root, atom_enc, bond_enc, atom_dec, bond_dec,
+                       split="validation"):
+    """``k`` target tuples read off real molecules of ``split`` (their DECODED property values), so
+    every target is one that some molecule actually achieves.
+
+    ``split`` is ``"validation"`` (where configurations are chosen) or ``"test"`` (held out: one
+    evaluation pass, with a configuration already frozen on validation)."""
+    if split not in ("validation", "test"):
+        raise ValueError(f"split must be 'validation' or 'test', got {split!r}")
+    reference = zinc_reference.load_reference_split(data_root)
+    pool = list(reference.val_smiles if split == "validation" else reference.test_smiles)
     order = np.random.default_rng(seed).permutation(len(pool))
     _, _, kekulize = zinc_vocabulary()
     targets = []
