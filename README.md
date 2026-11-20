@@ -258,9 +258,7 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 | [`docs/adapters.md`](docs/adapters.md) | what an adapter is; training, composing, the label convention, the file format |
 | [`docs/steering.md`](docs/steering.md) | Feynman-Kac, choosing `beta`, learned sizes, several properties, inpainting, spectra |
 | [`docs/rl.md`](docs/rl.md) | structural RL and adapter RL; the operating-point and selection traps |
-| [`docs/results.md`](docs/results.md) | the measured numbers, with protocols |
 | [`docs/caveats.md`](docs/caveats.md) | provenance, noise, what is thin, what was removed |
-| [`docs/migration.md`](docs/migration.md) | for users of the research fork (`defog`) |
 | [`examples/README.md`](examples/README.md) | the recipes, in pipeline order |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed in each release |
 
