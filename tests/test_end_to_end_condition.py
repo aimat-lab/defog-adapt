@@ -145,3 +145,69 @@ def test_a_file_that_is_not_a_condition_file_is_refused(common, tmp_path):
     bad.write_text('{"mean": 1.0}', encoding="utf-8")
     with pytest.raises(ValueError, match="missing"):
         common.read_condition_sidecar(bad)
+
+
+# ============================================================================ the whole conditional path, trained
+TOY_SMILES = """CCO CCCO CCCCO CCCCCO CCN CCCN CCCCN CCOC CCCOC CCOCC CC(C)O CC(C)N CC(C)C CCC(C)C CC(=O)C CCC(=O)C
+CC(=O)O CCC(=O)O CC(=O)N NCCO NCCN OCCO OCCCO CNC CCNCC CN(C)C C1CCCCC1 C1CCCC1 C1CCNCC1 C1CCOCC1 OC1CCCCC1
+c1ccccc1 Cc1ccccc1 CCc1ccccc1 Oc1ccccc1 Nc1ccccc1 COc1ccccc1 c1ccncc1 Cc1ccncc1 OCc1ccccc1""".split()
+TARGETS = (-0.5, 1.0, 2.5)
+
+
+@pytest.fixture(scope="module")
+def harness():
+    import importlib.util
+
+    script = EXAMPLES / "compare_arms__zinc.py"
+    name = "compare_arms_for_the_conditional_path"
+    sys.path.insert(0, str(EXAMPLES))
+    try:
+        spec = importlib.util.spec_from_file_location(name, script)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(EXAMPLES))
+    yield module
+    sys.modules.pop(name, None)
+
+
+def test_a_model_trained_on_these_labels_follows_the_target_it_is_given_through_the_harness(common, vocab, harness):
+    """Every part above passes its own test and the whole can still be wrong: a target standardised twice, or not at
+    all, or a condition the model learned to ignore. So train a small model on 40 molecules with the recipe's
+    labels, sample it with the harness's own conditional path, and require that it lands near each target. The
+    control hands the model the RAW target instead of the standardised one, and must fail the same criterion: if
+    it did not, the criterion could not have caught the mistake it exists to catch.
+
+    Measured over four seeds: the correct path has a total error of 0.7 to 1.3 across the three targets and is
+    always monotone; the control has 2.5 to 2.8."""
+    import pytorch_lightning as pl
+    from torch_geometric.loader import DataLoader
+
+    from defog_adapt.core import DeFoGModel
+    from defog_adapt.domains.molecule import mol_to_smiles, pyg_data_to_mol
+
+    pl.seed_everything(0)
+    graphs, _, mean, std, _ = label(common, vocab, graphs_of(vocab, TOY_SMILES), TOY_SMILES)
+    loader = DataLoader(graphs, batch_size=16, shuffle=True)
+    model = DeFoGModel.from_dataloader(loader, n_layers=2, hidden_dim=32, cond_dim=1, cond_drop_prob=0.1)
+    pl.Trainer(max_epochs=150, accelerator="cpu", logger=False, enable_progress_bar=False, enable_model_summary=False,
+               enable_checkpointing=False).fit(model, loader)
+    model.eval()
+    ctmc = dict(sample_steps=60, eta=0.0, omega=0.0, time_distortion="identity")
+
+    def achieved(target, stats):
+        draw = harness.conditional_draw(model, stats, None, ctmc, 1.0, torch.device("cpu"))
+        mols = [pyg_data_to_mol(g, vocab["atom_dec"], vocab["bond_dec"]) for g in draw(target, 64)]
+        values = [logp(Chem.MolFromSmiles(mol_to_smiles(m))) for m in mols if m is not None and mol_to_smiles(m)]
+        assert len(values) > 20, "too few valid molecules to say anything"
+        return float(np.mean(values))
+
+    def judged(stats):
+        means = [achieved(t, stats) for t in TARGETS]
+        return sum(abs(m - t) for m, t in zip(means, TARGETS)), all(a < b for a, b in zip(means, means[1:]))
+
+    correct, monotone = judged({"property": "logp", "property_from": "decoded", "mean": mean, "std": std})
+    assert correct < 1.8 and monotone, f"the pipeline does not follow its target: total error {correct:.2f}"
+    control, _ = judged({"property": "logp", "property_from": "decoded", "mean": 0.0, "std": 1.0})
+    assert control > 2.0, f"the criterion cannot tell a wrong standardisation from a right one ({control:.2f})"
