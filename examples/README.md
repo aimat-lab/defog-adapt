@@ -7,7 +7,7 @@ recorded result, and each of them runs.
 | file | what it is | needs |
 |---|---|---|
 | [`quickstart_cpu.py`](quickstart_cpu.py) | Every building block, end to end, on a toy problem. Tens of seconds on a desktop CPU. **A wiring check, not a result.** | `defog-adapt[chem]` |
-| [`training__e1.py`](training__e1.py) | Train the unconditional base on **ZINC250k** or **MOSES** (PyComex). | PyComex, the dataset, a GPU |
+| [`training__e1.py`](training__e1.py) | Train the unconditional base on **ZINC250k** or **MOSES** (PyComex). With `--CONDITION "'logp'"` (ZINC) the same recipe trains the model end to end on a property: the model an adapter is measured against. | PyComex, the dataset, a GPU |
 | [`rl_sanity__zinc.py`](rl_sanity__zinc.py) | Policy-gradient fine-tune of a ZINC base against disconnected fragments and odd ring sizes (PyComex). | PyComex, a base checkpoint |
 | [`adapter_training__zinc.py`](adapter_training__zinc.py) | Train one frozen-base adapter for logP, TPSA, QED or SAScore (PyComex). | PyComex, a base checkpoint, a GPU |
 | [`fit_property_head__zinc.py`](fit_property_head__zinc.py) | Fit the property head (the Feynman-Kac ruler and RL reward) and the learned size model. A plain script. | `defog-adapt[chem]`, a base checkpoint |

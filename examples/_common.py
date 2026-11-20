@@ -13,6 +13,8 @@ a head that is confidently wrong.
 """
 from __future__ import annotations
 
+import json
+import math
 import os
 import sys
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -81,6 +83,109 @@ def zinc_vocabulary() -> Tuple[List[str], List[str], bool]:
 
 
 # ============================================================================ labelled graphs
+def decoded_molecule(data, atom_decoder, bond_decoder):
+    """The molecule a GRAPH represents: decode it, round-trip it through SMILES, parse it.
+
+    ``None`` when the graph does not decode to a molecule. This is the molecule a ``"decoded"`` label
+    describes (see :func:`label_graphs`), and the one every generated sample is scored on, so a label and
+    a score always refer to the same thing.
+    """
+    decoded = pyg_data_to_mol(data, atom_decoder, bond_decoder)
+    back = mol_to_smiles(decoded) if decoded is not None else None
+    return Chem.MolFromSmiles(back) if back else None
+
+
+def attach_condition(
+    graphs: Sequence,
+    smiles: Optional[Sequence[str]],
+    prop_fn: Callable,
+    *,
+    atom_decoder,
+    bond_decoder,
+    mean: Optional[float] = None,
+    std: Optional[float] = None,
+) -> Tuple[list, Optional[list], float, float, int]:
+    """Label already-encoded graphs for END-TO-END conditional training.
+
+    Returns ``(graphs, smiles, mean, std, n_skipped)``. Each kept graph gets ``graph.y``, a ``(1, 1)``
+    tensor holding the STANDARDISED property of the molecule the graph represents (the ``"decoded"``
+    convention every recorded adapter, head and size model used). ``y`` is where a ``DeFoGModel`` with
+    ``cond_dim > 0`` reads its condition, and the model expects it already standardised.
+
+    A conditional model, unlike an adapter, stores no statistics: ``mean`` and ``std`` belong to the
+    caller, who must keep them to condition the model at sampling time. Pass the TRAIN split's values
+    when labelling a validation split; left out, they are computed from the graphs given (``std`` is
+    the population one, as in ``adapter_training__zinc.py``).
+
+    A graph whose property cannot be measured is dropped from ``graphs`` and ``smiles`` together, so the
+    two stay aligned one for one (``smiles`` may be ``None``, and is then returned as ``None``).
+    """
+    kept_graphs, kept_smiles, values, n_skipped = [], [], [], 0
+    for position, graph in enumerate(graphs):
+        mol = decoded_molecule(graph, atom_decoder, bond_decoder)
+        try:
+            value = float(prop_fn(mol)) if mol is not None else float("nan")
+        except Exception:                            # noqa: BLE001 - a property may fail on odd molecules
+            value = float("nan")
+        if not np.isfinite(value):
+            n_skipped += 1
+            continue
+        kept_graphs.append(graph)
+        values.append(value)
+        if smiles is not None:
+            kept_smiles.append(smiles[position])
+    if not values:
+        raise RuntimeError("no graph could be labelled: the vocabulary and the data disagree")
+    values = np.asarray(values, dtype=float)
+    mean = float(values.mean()) if mean is None else float(mean)
+    std = float(values.std()) if std is None else float(std)
+    if not std > 0:
+        raise ValueError(f"the standard deviation of the condition is {std}; nothing to condition on")
+    for graph, value in zip(kept_graphs, values):
+        graph.y = torch.tensor([[(value - mean) / std]], dtype=torch.float)
+    return kept_graphs, (kept_smiles if smiles is not None else None), mean, std, n_skipped
+
+
+#: Where an end-to-end conditional model keeps what it needs to be conditioned: the property's name and
+#: the mean and std that standardised it. The model itself stores neither.
+CONDITION_FILE = "condition.json"
+
+
+def write_condition_sidecar(directory, stats) -> str:
+    """Write the condition's statistics beside the checkpoints, or check them against the ones there.
+
+    The model does not store them, and a conditional model cannot be sampled without them. A chained run
+    recomputes them on every link; they have to come out the same, or the links are not training one model.
+    """
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, CONDITION_FILE)
+    if os.path.exists(path):
+        old = read_condition_sidecar(path)
+        same = (old["property"] == stats["property"]
+                and all(math.isclose(old[k], stats[k], rel_tol=1e-6, abs_tol=1e-9) for k in ("mean", "std")))
+        if not same:
+            raise RuntimeError(
+                f"{path} holds the condition statistics of a different run ({old['property']}: mean "
+                f"{old['mean']:.6f}, std {old['std']:.6f}) than this one ({stats['property']}: mean "
+                f"{stats['mean']:.6f}, std {stats['std']:.6f}). A chain link must continue the same model.")
+        return path
+    tmp = path + ".partial"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(stats, fh, indent=2)
+    os.replace(tmp, path)                                 # rename only when complete
+    return path
+
+
+def read_condition_sidecar(path) -> dict:
+    """The statistics ``write_condition_sidecar`` wrote: ``property``, ``property_from``, ``mean``, ``std``."""
+    with open(path, encoding="utf-8") as fh:
+        stats = json.load(fh)
+    missing = [k for k in ("property", "property_from", "mean", "std") if k not in stats]
+    if missing:
+        raise ValueError(f"{path} is not a condition file: missing {missing}")
+    return stats
+
+
 def label_graphs(
     smiles: Sequence[str],
     prop_fn: Callable,
@@ -125,9 +230,7 @@ def label_graphs(
             continue
         target = mol
         if property_from == "decoded":
-            decoded = pyg_data_to_mol(data, atom_decoder, bond_decoder)
-            back = mol_to_smiles(decoded) if decoded is not None else None
-            target = Chem.MolFromSmiles(back) if back else None
+            target = decoded_molecule(data, atom_decoder, bond_decoder)
             if target is None:                       # cannot measure what the graph is
                 n_skipped += 1
                 continue

@@ -80,6 +80,42 @@ def test_the_e1_recipe_trains_and_evaluates(workdir, dataset):
 @needs_examples
 @needs_data
 @needs_pycomex
+def test_the_e1_recipe_trains_a_conditional_model_and_keeps_the_statistics_it_needs(workdir):
+    """``--CONDITION`` is the same recipe plus a condition. What it must leave behind: a model that really has
+    a condition encoder, and the mean and std that standardised the labels, because the model stores neither
+    and cannot be sampled without them."""
+    import json
+
+    from defog_adapt.core import DeFoGModel
+
+    out = run(workdir, "training__e1.py", "--DATASET", "'zinc'", "--CONDITION", "'logp'", "--__TESTING__", "True")
+    assert "ZINC CONDITIONAL ON logp" in out and "Done. FCD and the other benchmark metrics are not computed here." in out
+
+    files = sorted((workdir / "results" / "training__e1").glob("*/condition.json"))
+    assert len(files) == 1, files                      # the unconditional run, in the same directory, wrote none
+    stats = json.loads(files[0].read_text(encoding="utf-8"))
+    assert stats["property"] == "logp" and stats["property_from"] == "decoded" and stats["std"] > 0
+    model = DeFoGModel.load(str(files[0].parent / "model"))
+    assert model.cond_dim == 1 and model.cond_drop_prob == pytest.approx(stats["cond_drop_prob"])
+    assert hasattr(model, "cond_encoder")
+
+
+@needs_examples
+@needs_pycomex
+@pytest.mark.parametrize("args, message", [
+    (("--CONDITION", "'nonsense'"), "unknown property"),
+    (("--DATASET", "'moses'", "--CONDITION", "'logp'"), "ZINC only"),
+])
+def test_the_conditional_option_refuses_what_it_cannot_do_before_loading_anything(workdir, args, message):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([sys.executable, "-W", "ignore", str(workdir / "training__e1.py"), *args,
+                           "--__TESTING__", "True"], capture_output=True, text=True, timeout=600, env=env, cwd=workdir)
+    assert proc.returncode != 0 and message in (proc.stdout + proc.stderr)
+
+
+@needs_examples
+@needs_data
+@needs_pycomex
 @pytest.mark.skipif(not have("zinc_e1_seed42_kek.ckpt"), reason="needs an E1 base checkpoint")
 def test_the_sanity_rl_recipe_runs_and_never_overwrites_its_base(workdir, tmp_path):
     base = ckpt("zinc_e1_seed42_kek")
