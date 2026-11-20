@@ -146,6 +146,29 @@ def attach_condition(
     return kept_graphs, (kept_smiles if smiles is not None else None), mean, std, n_skipped
 
 
+def accumulation_plan(batch_size: int, micro_batch_size: Optional[int],
+                      ema_decay: Optional[float]) -> Tuple[int, int, Optional[float]]:
+    """Fit a recipe's batch size onto a smaller GPU without changing the recipe.
+
+    Returns ``(micro_batch, accumulate, ema_decay_per_micro_batch)``. ``batch_size`` is what the optimizer
+    sees per step, as recorded; ``micro_batch_size`` is what is put on the GPU at once (``None``: all of it).
+    The optimizer steps once per ``accumulate = batch_size // micro_batch`` micro-batches, so the batch size,
+    the number of steps per epoch and the learning-rate schedule are all unchanged: a memory knob, not a
+    different recipe.
+
+    The EMA callback updates after every batch it is given, which is every MICRO-batch. Parameters only move
+    at optimizer steps, so ``accumulate`` updates in a row average the same parameters; decaying each by
+    ``ema_decay ** (1 / accumulate)`` makes them add up to the one ``ema_decay`` update per optimizer step
+    that the recipe specifies. Left alone, the average would silently run ``accumulate`` times shorter.
+    """
+    micro = batch_size if not micro_batch_size else int(micro_batch_size)
+    if micro <= 0 or micro > batch_size or batch_size % micro:
+        raise ValueError(f"MICRO_BATCH_SIZE must divide BATCH_SIZE ({batch_size}); got {micro_batch_size}")
+    accumulate = batch_size // micro
+    decay = float(ema_decay) ** (1.0 / accumulate) if ema_decay else ema_decay
+    return micro, accumulate, decay
+
+
 #: Where an end-to-end conditional model keeps what it needs to be conditioned: the property's name and
 #: the mean and std that standardised it. The model itself stores neither.
 CONDITION_FILE = "condition.json"

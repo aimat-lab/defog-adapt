@@ -30,7 +30,8 @@ validity         Three conventions reported side by side. The headline is the re
 recipe           ``defog_adapt.presets.E1_MODEL``: 9 layers, width 256, relative random-walk
                  features, marginal noise, polydec time distortion, edge-loss weight 5, cosine
                  learning-rate schedule from 2e-4, EMA 0.9999. 300 epochs at batch 256 for ZINC,
-                 100 for MOSES.
+                 100 for MOSES. Batch 256 needs more than the 24 GB of a consumer GPU: set
+                 ``MICRO_BATCH_SIZE`` (128 fits) and the same 256 graphs are accumulated per step.
 condition        OPTIONAL, ZINC only. ``--CONDITION "'logp'"`` trains the SAME model, every setting
                  above unchanged, end to end on that property: the model an adapter is measured
                  against (one given the condition from the start, rather than steered afterwards).
@@ -76,7 +77,7 @@ from defog_adapt.domains.molecule import build_encoders, validity_report
 from defog_adapt.presets import E1_MODEL, E1_SAMPLING
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import attach_condition, property_fn, write_condition_sidecar  # noqa: E402
+from _common import accumulation_plan, attach_condition, property_fn, write_condition_sidecar  # noqa: E402
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -133,7 +134,14 @@ COND_DROP_PROB: float = 0.1
 # :param EPOCHS: the cosine horizon; None means the recorded value for the dataset (ZINC 300,
 #     MOSES 100).
 EPOCHS: int = None
+# :param BATCH_SIZE: graphs per optimizer step, the recorded value.
 BATCH_SIZE: int = 256
+# :param MICRO_BATCH_SIZE: graphs put on the GPU at once; None means BATCH_SIZE. Smaller, and gradients are
+#     accumulated over BATCH_SIZE // MICRO_BATCH_SIZE micro-batches per step, so the batch size, the number of
+#     steps per epoch and the learning-rate schedule are unchanged: a memory knob, not a different recipe. The
+#     recorded 256 does not fit a 24 GB GPU (the first step needs more than 23 GB); 128 does. The EMA decay is
+#     adjusted so that it still decays by EMA_DECAY per optimizer step (see ``accumulation_plan``).
+MICRO_BATCH_SIZE: int = None
 LEARNING_RATE: float = E1_MODEL["lr"]
 LR_SCHEDULER: str = E1_MODEL["lr_scheduler"]
 LR_MIN: float = E1_MODEL["lr_min"]
@@ -199,6 +207,7 @@ def experiment(e: Experiment) -> None:
     if e.CONDITION and e.DATASET != "zinc":
         raise ValueError("CONDITION is implemented for ZINC only: the recorded properties are ZINC's")
     prop = property_fn(e.CONDITION) if e.CONDITION else None      # fails now, not after the encoding
+    micro_batch, accumulate, ema_decay = accumulation_plan(e.BATCH_SIZE, e.MICRO_BATCH_SIZE, e.EMA_DECAY)
     recorded = RECORDED[e.DATASET]
     epochs = e.EPOCHS or recorded["epochs"]
     num_workers = recorded["num_workers"] if e.NUM_WORKERS is None else e.NUM_WORKERS
@@ -294,9 +303,12 @@ def experiment(e: Experiment) -> None:
 
     # persistent_workers stays off on purpose: a lingering worker pool is a plausible reason for a
     # failed arm to sit on a GPU instead of exiting, and the respawn cost is noise.
-    train_loader = DataLoader(train_graphs, batch_size=e.BATCH_SIZE, shuffle=True,
+    if accumulate > 1:
+        e.log(f"batch {e.BATCH_SIZE} per optimizer step = {accumulate} micro-batches of {micro_batch}; "
+              f"EMA decay {e.EMA_DECAY} per step is applied as {ema_decay:.8f} per micro-batch")
+    train_loader = DataLoader(train_graphs, batch_size=micro_batch, shuffle=True,
                               num_workers=num_workers, persistent_workers=False)
-    val_loader = DataLoader(val_graphs, batch_size=e.BATCH_SIZE, num_workers=num_workers,
+    val_loader = DataLoader(val_graphs, batch_size=micro_batch, num_workers=num_workers,
                             persistent_workers=False)
 
     # -- Model ------------------------------------------------------------------------------
@@ -357,8 +369,8 @@ def experiment(e: Experiment) -> None:
 
     callbacks = [monitor, visual, best_ckpt]
     if e.EMA_DECAY and e.EMA_DECAY > 0:
-        callbacks = [EMACallback(decay=e.EMA_DECAY)] + callbacks
-        e.log(f"EMA enabled (decay={e.EMA_DECAY})")
+        callbacks = [EMACallback(decay=ema_decay)] + callbacks
+        e.log(f"EMA enabled (decay={e.EMA_DECAY} per optimizer step)")
     # PerLinkTimer, NOT Trainer(max_time=...): Lightning's Timer restores its elapsed time from the
     # checkpoint, which makes the budget cumulative over the chain and leaves later links nothing.
     if e.MAX_TIME_HOURS:
@@ -382,7 +394,8 @@ def experiment(e: Experiment) -> None:
               + (f"RESUMING from {resume_path}" if resume_path else "fresh start"))
 
     trainer = pl.Trainer(max_epochs=epochs, accelerator="auto", devices=1, enable_progress_bar=True,
-                         enable_checkpointing=enable_ckpt, logger=False, callbacks=callbacks)
+                         enable_checkpointing=enable_ckpt, logger=False, callbacks=callbacks,
+                         accumulate_grad_batches=accumulate)
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader,
                 ckpt_path=resume_path)
     e.log(f"saved final model to {model.save(os.path.join(e.path, 'model'))}")
@@ -435,7 +448,9 @@ def experiment(e: Experiment) -> None:
                          "n_samples": len(samples), "seed": e.SEED, "condition": None},
             "condition": cond_stats,
             "recipe": {"epochs_horizon": epochs, "epochs_completed": e["training/epochs_completed"],
-                       "batch_size": e.BATCH_SIZE, "lr": e.LEARNING_RATE, "ema_decay": e.EMA_DECAY},
+                       "batch_size": e.BATCH_SIZE, "micro_batch_size": micro_batch,
+                       "accumulate_grad_batches": accumulate, "optimizer_steps": int(trainer.global_step),
+                       "lr": e.LEARNING_RATE, "ema_decay": e.EMA_DECAY},
             "not_computed": ["fcd", "nspdk", "scaffold_similarity"],
             "novelty_reference": "train split",
         },

@@ -21,8 +21,8 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - **Molecules**: encode and decode, validity and distribution metrics, `morgan_condition`, kekulized
   representations, and reference-split loaders for ZINC250k, MOSES and ChEMBL.
 - `defog_adapt.presets`: the recorded recipes as plain data.
-- `examples/`: a CPU quickstart, PyComex recipes (E1 base training, optionally end to end on a property;
-  structural RL, adapter training, adapter RL), the property-head script, `steer_zinc.py` (the assembly) and `compare_arms__zinc.py` (the
+- `examples/`: a CPU quickstart, PyComex recipes (E1 base training, optionally end to end on a property and, with
+  `MICRO_BATCH_SIZE`, with the recorded batch accumulated on a 24 GB GPU; structural RL, adapter training, adapter RL), the property-head script, `steer_zinc.py` (the assembly) and `compare_arms__zinc.py` (the
   comparison behind the README's results figure).
 - `docs/`: adapters, steering, RL, results, caveats, migration.
 - `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP

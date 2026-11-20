@@ -101,6 +101,34 @@ def test_the_e1_recipe_trains_a_conditional_model_and_keeps_the_statistics_it_ne
 
 
 @needs_examples
+@needs_data
+@needs_pycomex
+def test_the_e1_recipe_accumulates_micro_batches_without_changing_the_number_of_optimizer_steps(workdir):
+    """``--MICRO_BATCH_SIZE`` is a memory knob: the optimizer must still see the recipe's batch size, so it steps
+    as often as it would have with the whole batch on the GPU. Twice as many steps would mean the accumulation
+    was not wired; half as many, that the loader kept the full batch."""
+    import json
+    import math
+
+    run(workdir, "training__e1.py", "--DATASET", "'zinc'", "--MICRO_BATCH_SIZE", "8", "--__TESTING__", "True")
+    newest = max((workdir / "results" / "training__e1").glob("*/e1_report.json"), key=lambda p: p.stat().st_mtime)
+    provenance = json.loads(newest.read_text(encoding="utf-8"))["provenance"]
+    recipe = provenance["recipe"]
+    assert (recipe["batch_size"], recipe["micro_batch_size"], recipe["accumulate_grad_batches"]) == (16, 8, 2)
+    steps_per_epoch = math.ceil(provenance["encoding"]["n_train_graphs"] / recipe["batch_size"])
+    assert recipe["optimizer_steps"] == recipe["epochs_completed"] * steps_per_epoch
+
+
+@needs_examples
+@needs_pycomex
+def test_a_micro_batch_that_does_not_divide_the_batch_is_refused_before_anything_loads(workdir):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([sys.executable, "-W", "ignore", str(workdir / "training__e1.py"), "--MICRO_BATCH_SIZE", "5",
+                           "--__TESTING__", "True"], capture_output=True, text=True, timeout=600, env=env, cwd=workdir)
+    assert proc.returncode != 0 and "must divide" in (proc.stdout + proc.stderr)
+
+
+@needs_examples
 @needs_pycomex
 @pytest.mark.parametrize("args, message", [
     (("--CONDITION", "'nonsense'"), "unknown property"),
