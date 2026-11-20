@@ -19,15 +19,6 @@ not in the installed package, so clone the repository to run them.
 
 ## The pipeline, in order
 
-```text
-training__e1.py ─▶ rl_sanity__zinc.py (×2) ─▶ adapter_training__zinc.py ─▶ adapter_rl_finetune__zinc.py
-   base model        a cleaner base              one adapter per property      (optional) tighter adapter
-                              │                          │
-                              └──────────▶ fit_property_head__zinc.py ──▶ head + size model
-                                                         │
-                                          steer_zinc.py ◀┘   sample, steer, decode, score
-```
-
 1. **Train a base** with `training__e1.py`.
 2. **Clean it up** with `rl_sanity__zinc.py`, twice. The second round starts from the first round's best checkpoint.
 3. **Train an adapter** per property with `adapter_training__zinc.py`, then a **head and a size model** for it with

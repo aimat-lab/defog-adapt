@@ -176,6 +176,8 @@ def test_the_site_builds_strictly_and_publishes_only_what_it_should(tmp_path):
         assert built_path(site, page).is_file(), f"{page} is in the nav but was not built"
     for relative in excluded_files():
         assert not built_path(site, relative).exists(), f"{relative} is excluded but was published"
+    for stylesheet in config().get("extra_css", []):
+        assert (site / stylesheet).is_file(), f"{stylesheet} is listed in extra_css but was not published"
     assert not list(site.rglob("*.py")), "a script was published"
     assert not list(site.rglob("trajectory.json")), "the banner's data was published"
 

@@ -24,7 +24,7 @@ This is a map, not an API reference: for the signature and the details of anythi
 | `ConditionBranch` | One condition in a composition: an adapter, a raw target and a guidance weight. |
 | `AdapterComposition` | Several branches combined, as a product or a mean. It is what `AdaptedSampler` takes. |
 
-## Steering: energies, heads and size models (`defog_adapt.core`)
+## Steering (`defog_adapt.core`)
 
 | Name | What it is |
 |---|---|

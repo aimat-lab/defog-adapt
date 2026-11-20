@@ -32,6 +32,9 @@ theme:
     - toc.follow
     - content.code.copy
 
+extra_css:
+  - stylesheets/extra.css
+
 # The site is the short, high-level documentation. The detailed notes stay in docs/ for the repository (readable on
 # GitHub, still checked by tests/test_docs.py) and are not published here; neither are the scripts and data that
 # build the banner and the results figure. The results figure itself is left out until the Home page shows results:

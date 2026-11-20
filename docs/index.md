@@ -1,6 +1,4 @@
-# defog-adapt
-
-![defog-adapt: steer a frozen graph generator](assets/banner/banner.gif)
+# ![defog-adapt: steer a frozen graph generator](assets/banner/banner.gif)
 
 **defog-adapt** steers a frozen [DeFoG](https://arxiv.org/abs/2410.04263) graph generator toward a property
 target. DeFoG is a discrete flow-matching model for graph generation, and molecules are the domain this package
