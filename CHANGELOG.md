@@ -25,6 +25,10 @@ Import name `defog_adapt`. Code only: no model weights ship.
   `MICRO_BATCH_SIZE`, with the recorded batch accumulated on a 24 GB GPU; structural RL, adapter training, adapter RL), the property-head script, `steer_zinc.py` (the assembly) and `compare_arms__zinc.py` (the
   comparison behind the README's results figure).
 - `docs/`: adapters, steering, RL, results, caveats, migration.
+- The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
+  model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
+  over three seeds (`docs/results.md` section 9; `docs/assets/results_logp.json` holds the data and
+  `docs/assets/results_logp.py` draws it).
 - `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
   adapter, from the same noise), its recorded trajectory and the scripts that made it.
 - The README opens with installation, the results figure (`docs/assets/results_logp.py`) and a self-contained

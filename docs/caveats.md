@@ -6,22 +6,25 @@ than "these features work", and this page says where the gap is. Read it before 
 
 ## Provenance
 
-* **Nothing was retrained for 0.1.** The code was extracted from a research fork, and the release gate
+* **Most numbers were not retrained for 0.1.** The code was extracted from a research fork, and the release gate
   is *equivalence*: a golden-output parity test that runs real checkpoints through the real sampling,
   Feynman-Kac and RL code paths and matches the research package bit for bit, plus the unit tests.
-  The numbers in `results.md` are the research fork's, measured with its harness, and have not been
-  reproduced end to end here. The one exception is the steering re-measurement at the end of
-  `results.md`, which ran this repository's `examples/steer_zinc.py` on the same kind of protocol.
+  Sections 1 to 7 of `results.md` are the research fork's, measured with its harness, and have not been
+  reproduced end to end here. There are two exceptions, both measured with this repository's own scripts: the
+  steering re-measurement (section 8) and the five-way comparison behind the README figure (section 9), whose
+  models were all trained here.
 * **No model weights ship with 0.1.** The recorded results depend on checkpoints you have to train
   with the recipes in `examples/` (or obtain elsewhere).
-* **The evaluation harness is not included.** The conditional numbers follow the FreeGress ZINC250k
+* **The harness behind the older numbers is not included.** The conditional numbers of sections 3 to 7 follow the FreeGress ZINC250k
   protocol (100 targets drawn from real molecules, 10 generations each, pooled error to the target)
   and were produced by a separate script. `examples/steer_zinc.py --evaluate` follows the same protocol
   shape, so numbers agree within run-to-run noise, but it is not bit-reproducible against the original.
+  The harness behind section 9, `examples/compare_arms__zinc.py`, is included.
   FCD, NSPDK and scaffold similarity are computed by tools this package does not depend on.
 * **The recipes were validated by smoke runs.** Each runs end to end on CPU against the real reference
   data and checkpoints (`tests/test_recipes.py`), which shows the pipeline executes and its checks pass.
-  It does not show that a full-scale run reproduces the recorded result.
+  It does not show that a full-scale run reproduces the recorded result; section 9 of `results.md` is a full-scale run
+  of the logP path.
 
 ## The adapter base is a re-packaged checkpoint
 
@@ -47,6 +50,11 @@ The base-model results (the E1 rows) used the same recipe directly.
   is larger than most of the capacity differences between architecture variants, so no capacity trend
   should be read from single seeds. Only the step from FiLM-only to cross-attention (-0.19) and the epoch
   count (-0.07) clear it.
+* **Section 9 trained each approach once.** Its standard deviations are over sampling seeds and their target sets, not over
+  trainings, so they say how much the measurement moves, not the model. The 0.058 spread between two trainings of one
+  adapter recipe applies: a gap between two different trained models of about that size or less, such as Feynman-Kac
+  against the end-to-end model (0.035), is not an ordering this evidence can establish. A difference within one trained
+  model (Feynman-Kac against the cross-attention adapter it steers) is paired and does not carry that noise.
 * **Seed duplicates change conclusions.** A weighted-reward RL run on QED gave -26% on one seed and
   -9.8% on a duplicate of the same configuration. The direction was safe (12 of 12 level-arm deltas
   negative); the magnitude was not.
@@ -69,6 +77,12 @@ The base-model results (the E1 rows) used the same recipe directly.
   sampler. Judge the low and high thirds: an early QED adapter had +26% skill over doing nothing at both
   ends and -174% in the middle, and read as "worse than doing nothing" only when compared against a
   baseline measured on the wrong target set.
+* **A model trained end to end is more accurate than any frozen-base approach measured.** In section 9 of `results.md` it
+  reaches a logP error of 0.1810, against 0.2161 for the cross-attention adapter with Feynman-Kac and 0.2721 for the
+  adapter alone. Steering a frozen base is the cheaper route (a small file per property on one shared base, composable,
+  no retraining of a model) and it gets most of the way, not all of it. The end-to-end model was measured at guidance
+  weight 1 because the library's guidance for such a model blends rate matrices, which breaks above weight 1; a better
+  guided variant is not measured.
 * **High guidance weights break validity.** Past about 2 to 2.5 validity falls away fast (logP at
   w = 4: 0.466), driven by disconnected fragments. The optimum is per property and per adapter; see
   `presets.ADAPTER_WEIGHT`.

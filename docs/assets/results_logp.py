@@ -1,15 +1,20 @@
-"""The README's results figure: the logP error of each arm, as a bar chart. Run it to rebuild results_logp.png:
+"""The README's results figure: the logP error of each way of conditioning a ZINC model, as a bar chart.
 
-    python docs/assets/results_logp.py
+    python docs/assets/results_logp.py            # reads results_logp.json, writes results_logp.png
 
-The numbers are the ones in the README's "Results at a glance" table, which come from docs/results.md (ZINC250k,
-logP, the FreeGress protocol: 100 targets drawn from real molecules, 10 generations each, validation). Edit them
-there first; this script only draws them.
+``results_logp.json`` is the summary that ``examples/compare_arms__zinc.py summarize`` writes for the held-out
+test pass (ZINC250k, 100 targets drawn from real molecules, 10 generations each, three seeds); this script only
+draws it. The numbers live there, with their protocol, so a chart cannot drift from the data it shows. They are
+discussed, with what they do not support, in docs/results.md and docs/caveats.md.
 
-Form: one arm is the point (Feynman-Kac, the largest single step), so it is drawn in the accent and the rest in
-the de-emphasis gray, with the value at every bar tip and no legend or axis ticks (every bar is labelled; the
-README table is the table view). Colours and ink are the dataviz reference palette's light surface.
+Form: one arm is the point (Feynman-Kac on the cross-attention adapter, the end of the progression), so it is
+drawn in the accent and the rest in the de-emphasis gray. The two references (nothing steering the base, and a
+model trained end to end on the condition) sit above a hairline, the three adapter arms below it. Every bar is
+labelled with its mean and sd over seeds, and the whisker is the same sd, so there is no legend and no axis
+ticks; the table view is docs/results.md. Colours and ink are the dataviz reference palette's light surface.
 """
+import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -19,24 +24,24 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import PathPatch  # noqa: E402
 from matplotlib.path import Path as MplPath  # noqa: E402
 
-# (label, logP error, note, is_branch, is_headline). Rows 5 and 6 are alternatives, not additions to the row above.
-ARMS = [
-    ("the first adapter (FiLM only)", 0.5420, "", False, False),
-    ("cross-attention + Fourier adapter", 0.3250, "", False, False),
-    ("+ learned node counts", 0.3132, "", False, False),
-    ("+ Feynman-Kac (β = 20)", 0.2299, "", False, True),
-    ("instead of FK: + RL on the adapter", 0.2807, "", True, False),
-    ("RL and FK together", 0.2157, "not significantly better than FK alone", True, False),
+#: (arm, label) in drawing order; the first ``N_REFERENCES`` are the references above the hairline.
+ROWS = [
+    ("base", "unconditional base"),
+    ("conditional", "trained end to end on logP"),
+    ("film", "FiLM adapter"),
+    ("xattn", "cross-attention adapter"),
+    ("xattn_fk", "cross-attention adapter + Feynman-Kac"),
 ]
-NOISE_FLOOR = 0.011
+N_REFERENCES = 2
+HEADLINE = "xattn_fk"
 
 SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 ACCENT, CONTEXT, BASELINE, HAIRLINE = "#2a78d6", "#c3c2b7", "#c3c2b7", "#e1e0d9"
 FONT = "Roboto Condensed"
 
 W, H = 760, 330                      # canvas in "1x" pixels; the file is written at 2x
-LABEL_X, BAR_X0, SCALE = 214, 228, 740   # labels end at LABEL_X; the bars start at BAR_X0; SCALE px per unit of error
-ROW0, PITCH, GAP, THICK, RADIUS = 92, 38, 14, 18, 4
+LABEL_X, BAR_X0, MAX_BAR = 256, 270, 330     # labels end at LABEL_X; bars start at BAR_X0; the longest is MAX_BAR px
+ROW0, PITCH, GAP, THICK, RADIUS = 96, 38, 14, 18, 4
 
 
 def rounded_bar(ax, x0, y_mid, length, color):
@@ -48,7 +53,21 @@ def rounded_bar(ax, x0, y_mid, length, color):
     ax.add_patch(PathPatch(MplPath(verts, codes), facecolor=color, edgecolor="none", lw=0))
 
 
-def main(out: Path) -> None:
+def load(path: Path) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    missing = [arm for arm, _ in ROWS if arm not in data["arms"]]
+    if missing:
+        raise SystemExit(f"{path.name} has no result for {missing}; the figure needs all five arms")
+    return data
+
+
+def main(data_path: Path, out: Path) -> None:
+    data = load(data_path)
+    protocol, arms = data["protocol"], data["arms"]
+    n_seeds = len(arms[HEADLINE]["seeds"])
+    top = max(arms[arm]["mae_mean"] + (arms[arm]["mae_sd"] or 0.0) for arm, _ in ROWS)
+    scale = MAX_BAR / top
+
     plt.rcParams["font.family"] = FONT
     fig = plt.figure(figsize=(W / 100, H / 100), dpi=200, facecolor=SURFACE)
     ax = fig.add_axes([0, 0, 1, 1])
@@ -57,25 +76,38 @@ def main(out: Path) -> None:
     ax.axis("off")
 
     px = 72 / 100                    # one "1x" pixel in points
-    ax.text(24, 30, "Error to the logP target, by arm (lower is better)", fontsize=15 * px, fontweight="medium",
-            color=INK, va="baseline")
-    ax.text(24, 52, f"ZINC250k, 100 targets × 10 generations, validation. Run-to-run noise is about {NOISE_FLOOR}.",
+    ax.text(24, 30, "Error to the logP target, by approach (lower is better)", fontsize=15 * px,
+            fontweight="medium", color=INK, va="baseline")
+    ax.text(24, 52, f"ZINC250k {protocol['split']} split, {protocol['n_targets']} targets × "
+                    f"{protocol['n_per_target']} generations. Bars: mean over {n_seeds} seeds; whiskers: ±1 sd.",
             fontsize=12 * px, color=INK2, va="baseline")
 
     y = ROW0
-    for k, (label, value, note, branch, headline) in enumerate(ARMS):
-        if k == 4:                                       # the two alternatives sit below a hairline
+    for k, (arm, label) in enumerate(ROWS):
+        if k == N_REFERENCES:                            # the adapter arms sit below a hairline
             y += GAP
-            ax.plot([24, W - 24], [y - PITCH / 2 + 1, y - PITCH / 2 + 1], color=HAIRLINE, lw=0.8, solid_capstyle="butt")
-        length = value * SCALE
+            ax.plot([24, W - 24], [y - PITCH / 2 + 1, y - PITCH / 2 + 1], color=HAIRLINE, lw=0.8,
+                    solid_capstyle="butt")
+        mean, sd = arms[arm]["mae_mean"], arms[arm]["mae_sd"]
+        headline, reference = arm == HEADLINE, k < N_REFERENCES
+        length = mean * scale
         rounded_bar(ax, BAR_X0, y, length, ACCENT if headline else CONTEXT)
+        end = BAR_X0 + length
+        if sd:                                           # the whisker: ±1 sd, with end caps
+            lo, hi = BAR_X0 + max(mean - sd, 0.0) * scale, BAR_X0 + (mean + sd) * scale
+            ax.plot([lo, hi], [y, y], color=INK, lw=1.0, solid_capstyle="butt")
+            for x in (lo, hi):
+                ax.plot([x, x], [y - 4, y + 4], color=INK, lw=1.0, solid_capstyle="butt")
+            end = hi
         ax.text(LABEL_X, y + 4.2, label, fontsize=13 * px, ha="right", va="baseline",
                 color=INK if headline else INK2, fontweight="medium" if headline else "regular",
-                fontstyle="italic" if branch else "normal")
-        ax.text(BAR_X0 + length + 8, y + 4.6, f"{value:.4f}", fontsize=13 * px, ha="left", va="baseline", color=INK,
-                fontweight="medium" if headline else "regular")
-        if note:
-            ax.text(BAR_X0 + length + 58, y + 4.2, note, fontsize=12 * px, ha="left", va="baseline", color=MUTED)
+                fontstyle="italic" if reference else "normal")
+        value = ax.text(end + 10, y + 4.6, f"{mean:.3f}", fontsize=13 * px, ha="left", va="baseline", color=INK,
+                        fontweight="medium" if headline else "regular")
+        if sd:
+            fig.canvas.draw()
+            right = value.get_window_extent().transformed(ax.transData.inverted()).x1
+            ax.text(right + 4, y + 4.6, f"± {sd:.3f}", fontsize=12 * px, ha="left", va="baseline", color=MUTED)
         y += PITCH
     ax.plot([BAR_X0, BAR_X0], [ROW0 - PITCH / 2 + 4, y - PITCH / 2 + GAP - 4], color=BASELINE, lw=0.8,
             solid_capstyle="butt")                       # the one baseline the bars grow from
@@ -85,4 +117,7 @@ def main(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(__file__).with_name("results_logp.png"))
+    here = Path(__file__).parent
+    data_arg = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "results_logp.json"
+    out_arg = Path(sys.argv[2]) if len(sys.argv) > 2 else here / "results_logp.png"
+    main(data_arg, out_arg)
