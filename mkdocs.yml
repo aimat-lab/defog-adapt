@@ -37,8 +37,10 @@ extra_css:
 
 # The site is the short, high-level documentation. The detailed notes stay in docs/ for the repository (readable on
 # GitHub, still checked by tests/test_docs.py) and are not published here; neither are the scripts and data that
-# build the banner and the results figure. The results figure itself is left out until the Home page shows results:
-# remove its line below when it does, and `mkdocs build --strict` will say if the page and this list disagree.
+# build the banner and the results figure. The results figure and its data file are left out until the Home page shows
+# results: remove their two lines below when it does. `mkdocs build --strict` does NOT complain about a page that links
+# an excluded file (it only logs it), so tests/test_docs_site.py checks both ways: a page must not link a file that is
+# left out, and the site must not publish a file from docs/ that no page uses.
 exclude_docs: |
   /adapters.md
   /steering.md
@@ -50,6 +52,7 @@ exclude_docs: |
   /assets/banner/trajectory.json
   /assets/banner/README.md
   /assets/results_logp.png
+  /assets/results_logp.json
 
 # A page that is not in the nav, or a link or anchor that goes nowhere, fails `mkdocs build --strict`.
 validation:

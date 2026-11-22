@@ -10,6 +10,7 @@ Most checks read files, so they run anywhere. The build itself runs only where t
 """
 import importlib.util
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -52,6 +53,9 @@ def nav_entries(items):
 
 def is_url(target):
     return re.match(r"^[a-z][a-z0-9+.-]*://", target) is not None
+
+
+LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")           # a link or an image, in Markdown
 
 
 def nav_pages():
@@ -137,6 +141,8 @@ def test_the_workflow_builds_strictly_on_every_pull_request():
     assert set(wf["triggers"]) == {"push", "pull_request", "workflow_dispatch"}
     steps = " ".join(step.get("run", "") for step in wf["jobs"]["build"]["steps"])
     assert "mkdocs build --strict" in steps, "a warning must fail the build, or a broken link ships"
+    assert "tests/test_docs_site.py" in steps and "--noconftest" in steps, \
+        "the site's own checks (what it publishes, the nav, the exclusions) must run in CI beside the build"
     assert str(wf["env"]["NO_MKDOCS_2_WARNING"]) == "1"
 
 
@@ -180,6 +186,26 @@ def test_the_site_builds_strictly_and_publishes_only_what_it_should(tmp_path):
         assert (site / stylesheet).is_file(), f"{stylesheet} is listed in extra_css but was not published"
     assert not list(site.rglob("*.py")), "a script was published"
     assert not list(site.rglob("trajectory.json")), "the banner's data was published"
+
+    # Every link and image on a page leads somewhere in the built site. MkDocs only logs a link to an excluded file at
+    # info level, so `--strict` passes and the link is dead on the site: a page that points at one of the detailed
+    # notes, or at the figure that is left out, is caught here.
+    for page in sorted(nav_pages()):
+        for target in LINK.findall((ROOT / "docs" / page).read_text(encoding="utf-8")):
+            if is_url(target) or target.startswith(("#", "mailto:")):
+                continue
+            relative = posixpath.normpath(posixpath.join(posixpath.dirname(page), target.partition("#")[0]))
+            assert built_path(site, relative).exists(), \
+                f"{page} links to {target}, which is not in the built site (is it excluded?)"
+
+    # Nothing goes out that no page uses: a figure or a data file that lands in docs/ would otherwise be published
+    # with the site, and the build itself says nothing about it.
+    used = "\n".join((ROOT / "docs" / page).read_text(encoding="utf-8") for page in nav_pages())
+    used += "\n" + "\n".join(config().get("extra_css", []) + config().get("extra_javascript", []))
+    for asset in sorted((ROOT / "docs").rglob("*")):
+        relative = asset.relative_to(ROOT / "docs").as_posix()
+        if asset.is_file() and asset.suffix != ".md" and (site / relative).exists():
+            assert relative in used, f"docs/{relative} is published but no page uses it: use it, or add it to exclude_docs"
 
     pages = {p: p.read_text(encoding="utf-8") for p in site.rglob("*.html")}
     assert not [p.relative_to(site) for p, html in pages.items() if "--8<--" in html], \
