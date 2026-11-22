@@ -47,11 +47,12 @@ which is not bundled because it caps numpy below 2.
 ## 📊 Results at a glance
 
 <p align="center">
-  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of each arm, lower is better: 0.542 for the first adapter, 0.325 with cross-attention and Fourier features, 0.313 with learned node counts and 0.230 with Feynman-Kac steering. RL on the adapter instead of Feynman-Kac gives 0.281, and RL with Feynman-Kac 0.216, not significantly better than Feynman-Kac alone." width="760">
+  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three seeds: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering." width="760">
 </p>
 
-Feynman-Kac steering costs sample diversity (uniqueness about 0.76, against 1.0 without it). Every number, its
-protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
+The model trained end to end on the property is the most accurate. A small adapter on a frozen base gets most of the
+way there, and Feynman-Kac steering a little closer, at a cost in sample diversity (uniqueness 0.79, against 1.0 for
+the others). Every number, its protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
 [`docs/caveats.md`](docs/caveats.md).
 
 ## 🚀 Quickstart
@@ -251,7 +252,7 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 |---|---|---|
 | **Frozen-base adapters** (`CrossAttentionAdapter`, `AdapterModule`, `AdapterComposition`) | A small conditional adapter over a frozen unconditional base: swappable (one file per property) and composable (two properties multiply). Node cross-attention and Fourier bands on the condition. | logP, QED, TPSA and SAScore on ZINC250k; joint logP + QED; Morgan fingerprints |
 | **Learned size model** (`LearnedSizeDistribution`) | Draw the node count from `P(n \| target)` instead of the dataset marginal. | -0.0103 logP and -0.0058 QED error |
-| **Feynman-Kac steering** (`FeynmanKacSampler`, `StandardisedEnergy`, `PropertyHead`) | Inference-time particle steering toward a target, scored by a learned property head, with a dimensionless `beta`. | the largest single lever measured: logP 0.3132 to 0.2299 |
+| **Feynman-Kac steering** (`FeynmanKacSampler`, `StandardisedEnergy`, `PropertyHead`) | Inference-time particle steering toward a target, scored by a learned property head, with a dimensionless `beta`. | logP error 0.272 to 0.216 on the held-out test split (three seeds), at a cost in diversity (uniqueness 0.79) |
 | **GDPO fine-tuning** (`GDPOTrainer`, `AdapterGDPOTrainer`) | Policy-gradient RL on the base (fewer fragments, odd rings) or on an adapter (tighter conditioning). | -13.6% logP and -19.5% QED with validity up; structural RL on ZINC |
 | **Kekulized molecular representation** | Dropping the aromatic bond class makes a whole kind of validity failure impossible. | MOSES validity 0.884 to 0.991 |
 | **Inpainting** (`InpaintingSampler`) | Freeze a substructure and grow the rest (RePaint-style). | *thin*: one demonstration |
