@@ -10,6 +10,10 @@ evidence behind each item, is in
 - **No trained models ship with the package.** You train the base model, the adapters, the property heads and the size
   models yourself, and the base and the adapters need a GPU.
 - **An adapter is tied to its base.** To its vocabulary for certain, and in practice to its weights.
+- **An adapter is less accurate than training end to end.** In the recorded comparison, a model trained end to end on
+  the property had a lower logP error than an adapter alone. Feynman-Kac steering brings the adapter close, and that
+  comparison cannot say which of the two is better. What the adapter buys is one frozen base that serves every
+  property.
 - **Steering costs diversity.** Feynman-Kac steering lowers the error to the target at the price of less variety among
   the molecules.
 - **The gains do not add up.** The gain from RL fine-tuning and the gain from Feynman-Kac steering are not additive.

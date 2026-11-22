@@ -34,6 +34,10 @@ The price is that an adapter is tied to the base it was trained on: to its vocab
 its weights. At sampling time a **guidance weight** sets how hard the adapter pulls. The best value differs by
 property and is recorded in `ADAPTER_WEIGHT` in `defog_adapt.presets`; guiding beyond about 2 degrades validity.
 
+Accuracy is the other price. In the recorded comparison, a model trained end to end on the property reaches a lower
+logP error than an adapter alone. The adapter gets most of the way there, Feynman-Kac steering brings it closer, and it
+leaves the base reusable for every other property.
+
 Details: [adapters.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/adapters.md).
 
 ## Feynman-Kac steering
