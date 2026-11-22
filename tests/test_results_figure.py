@@ -7,6 +7,7 @@ synthetic numbers (clearly not results); the last one checks the committed data 
 import importlib.util
 import json
 import re
+import statistics
 import sys
 from pathlib import Path
 
@@ -111,10 +112,80 @@ def test_the_results_table_in_the_docs_is_the_data_file():
             assert cell in row, f"{a['label']}: {cell!r} is not in {row!r}"
 
 
-def test_the_caveat_that_names_the_end_to_end_gap_quotes_the_data_file():
-    arms = committed()["arms"]
+def recorded_spread() -> str:
+    """The difference between two trainings of one adapter recipe, as docs/caveats.md records it."""
     caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
-    bullet = caveats[caveats.index("**A model trained end to end is more accurate"):]
+    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error", caveats).group(1)
+
+
+def gap_to_end_to_end(arm: str) -> float:
+    arms = committed()["arms"]
+    return arms[arm]["mae_mean"] - arms["conditional"]["mae_mean"]
+
+
+def paired(a: str, b: str):
+    """Mean and sample sd of the per-seed difference a - b; the seeds share their target sets across approaches."""
+    arms = committed()["arms"]
+    diff = [x - y for x, y in zip(arms[a]["mae_per_seed"], arms[b]["mae_per_seed"])]
+    return statistics.mean(diff), statistics.stdev(diff)
+
+
+def readme_caption() -> str:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    results = readme[readme.index("Results at a glance"):]
+    return results[:results.index("\n## ")]
+
+
+def test_the_caveat_that_names_the_end_to_end_gap_quotes_the_data_file_and_the_side_of_the_spread_each_gap_is_on():
+    arms, spread = committed()["arms"], recorded_spread()
+    caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
+    bullet = caveats[caveats.index("**The model trained end to end had the lowest error"):]
     bullet = bullet[:bullet.index("\n* **")]
     for arm in ("conditional", "xattn_fk", "xattn"):
         assert f"{arms[arm]['mae_mean']:.4f}" in bullet, (arm, bullet)
+    alone, steered = f"{gap_to_end_to_end('xattn'):.3f}", f"{gap_to_end_to_end('xattn_fk'):.3f}"
+    assert float(steered) < float(spread) < float(alone), "the bullet's 'more than' and 'less than' would be wrong"
+    assert f"a gap of {alone}, more than the {spread} recorded" in bullet
+    assert f"a gap of {steered}, less than that" in bullet
+
+
+def test_the_readme_caption_quotes_the_gap_to_feynman_kac_and_the_spread_it_is_measured_against():
+    gap, spread = f"{gap_to_end_to_end('xattn_fk'):.3f}", recorded_spread()
+    assert float(gap) < float(spread), "the caption's 'smaller than' would be wrong: the sentence needs rewriting"
+    caption = " ".join(readme_caption().split())
+    assert f"the {gap} between the end-to-end model and the steered adapter" in caption
+    assert f"smaller than the {spread} recorded between two trainings" in caption
+
+
+def test_the_every_seed_claims_of_the_text_hold_in_the_data_file():
+    """'Below every other approach on every sampling seed', 'beats FiLM on all three seeds', 'improves ... on all three'."""
+    arms = committed()["arms"]
+    for i, seed in enumerate(arms["base"]["seeds"]):
+        mae = {arm: arms[arm]["mae_per_seed"][i] for arm in ARMS}
+        assert mae["conditional"] < min(v for arm, v in mae.items() if arm != "conditional"), seed
+        assert mae["xattn"] < mae["film"] and mae["xattn_fk"] < mae["xattn"], seed
+
+
+def test_the_reading_bullets_of_section_nine_quote_the_paired_differences_and_shares_of_the_data_file():
+    arms, section = committed()["arms"], section_nine()
+    reading = section[section.index("**Reading it.**"):section.index("### Protocol")]
+    for a, b in (("xattn_fk", "conditional"), ("xattn", "conditional"), ("film", "xattn"), ("xattn_fk", "xattn")):
+        mean, sd = paired(a, b)
+        assert f"{abs(mean):.4f} ± {sd:.4f}" in reading, f"{a} against {b}: {abs(mean):.4f} ± {sd:.4f} is not in the bullets"
+    base, e2e = arms["base"]["mae_mean"], arms["conditional"]["mae_mean"]
+    share = {arm: f"{100 * (base - arms[arm]['mae_mean']) / (base - e2e):.0f}" for arm in ("film", "xattn", "xattn_fk")}
+    quoted = {"xattn": re.search(r"cross-attention adapter closes about (\d+)%", reading).group(1),
+              "xattn_fk": re.search(r"Feynman-Kac about (\d+)%", reading).group(1),
+              "film": re.search(r"training budget, about (\d+)%", reading).group(1)}
+    assert quoted == share
+
+
+def test_no_text_calls_the_end_to_end_model_the_most_accurate_while_its_lead_over_feynman_kac_is_inside_the_spread():
+    """The sentence the first version of this section carried; the section's own caveats say it is not established."""
+    gap = gap_to_end_to_end("xattn_fk")
+    if gap >= float(recorded_spread()):
+        pytest.skip("the lead is larger than the recorded spread, so the plain wording would be supported")
+    for name in ("README.md", "docs/results.md", "docs/caveats.md"):
+        text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
+        for claim in ("most accurate", "more accurate than any"):
+            assert claim not in text, f"{name} says {claim!r}, but the lead over Feynman-Kac ({gap:.3f}) is inside the spread"

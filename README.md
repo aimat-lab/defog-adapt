@@ -47,12 +47,14 @@ which is not bundled because it caps numpy below 2.
 ## 📊 Results at a glance
 
 <p align="center">
-  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three seeds: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering." width="760">
+  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering." width="760">
 </p>
 
-The model trained end to end on the property is the most accurate. A small adapter on a frozen base gets most of the
-way there, and Feynman-Kac steering a little closer, at a cost in sample diversity (uniqueness 0.79, against 1.0 for
-the others). Every number, its protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
+The model trained end to end on the property had the lowest error. An adapter on a frozen base gets most of the way
+there, and Feynman-Kac steering closer still, at a cost in sample diversity (uniqueness 0.79, against 1.0 for the
+others). Each approach was trained once, and the 0.035 between the end-to-end model and the steered adapter is smaller
+than the 0.058 recorded between two trainings of one adapter recipe, so this comparison does not order those two. Every
+number, its protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
 [`docs/caveats.md`](docs/caveats.md).
 
 ## 🚀 Quickstart

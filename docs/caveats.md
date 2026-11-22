@@ -77,12 +77,14 @@ The base-model results (the E1 rows) used the same recipe directly.
   sampler. Judge the low and high thirds: an early QED adapter had +26% skill over doing nothing at both
   ends and -174% in the middle, and read as "worse than doing nothing" only when compared against a
   baseline measured on the wrong target set.
-* **A model trained end to end is more accurate than any frozen-base approach measured.** In section 9 of `results.md` it
-  reaches a logP error of 0.1810, against 0.2161 for the cross-attention adapter with Feynman-Kac and 0.2721 for the
-  adapter alone. Steering a frozen base is the cheaper route (a small file per property on one shared base, composable,
-  no retraining of a model) and it gets most of the way, not all of it. The end-to-end model was measured at guidance
-  weight 1 because the library's guidance for such a model blends rate matrices, which breaks above weight 1; a better
-  guided variant is not measured.
+* **The model trained end to end had the lowest error of the five approaches, but its lead over Feynman-Kac is smaller
+  than the recorded training spread.** In section 9 of `results.md` it reaches a logP error of 0.1810, against 0.2721 for
+  the cross-attention adapter (a gap of 0.091, more than the 0.058 recorded between two trainings of one adapter recipe)
+  and 0.2161 for the adapter with Feynman-Kac (a gap of 0.035, less than that, so not an ordering this evidence can
+  establish). Steering a frozen base is the cheaper route (a small file per property on one shared base, composable, no
+  retraining of a model) and it gets most of the way. The end-to-end model was measured at guidance weight 1 because the
+  library's guidance for such a model blends rate matrices, which breaks above weight 1; a guided variant is not
+  measured.
 * **High guidance weights break validity.** Past about 2 to 2.5 validity falls away fast (logP at
   w = 4: 0.466), driven by disconnected fragments. The optimum is per property and per adapter; see
   `presets.ADAPTER_WEIGHT`.
