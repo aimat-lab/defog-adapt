@@ -28,6 +28,12 @@ ELEMENT = {'C': C_FILL, 'N': '#3a5ee0', 'O': '#e5303c', 'S': '#d6c100'}
 _frost_ids = itertools.count()
 
 
+def background(fig, radius=6):
+    """A flat white card behind the whole figure. The tool's SVG is transparent, and the figures are drawn in black, so on the
+    dark theme of the site they would vanish; on a card they read on either."""
+    fig.rect(0, 0, fig.w, fig.h, radius=radius, fill=WHITE, stroke='none', name='background')
+
+
 def snowflake(fig, cx, cy, r, color=ICE_D, sw=1.05, name='snowflake'):
     """A six-armed snowflake with a V branch on each arm, drawn as round-capped lines."""
     for k in range(6):

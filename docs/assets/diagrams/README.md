@@ -16,6 +16,9 @@ It is the README banner's. A frozen model is a white trapezoid with pale blue st
 orange block with a flame; a model whose weights change carries a delta-W badge. Feynman-Kac steering is cyan and RL fine-tuning
 purple. The molecules are small hand-made graphs, drawn so that no two slots in a figure show the same one (`src/vocab.py`).
 
+Each diagram is drawn in black on a white card (the shape named `background`), so that it reads on the dark theme of the site
+as well; there is no separate dark variant. `tests/test_diagrams.py` checks that the card is there and covers the canvas.
+
 ## Files
 
 | file | what it is |

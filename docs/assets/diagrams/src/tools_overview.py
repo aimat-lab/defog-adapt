@@ -61,6 +61,7 @@ def sample_flow(fig, x0, cy, model_fill=None, adapter=False, out_kind='phenol', 
 
 
 def build(fig):
+    background(fig)
     # --- the grid: row bands, the dashed separator, column headers
     for y in ROW_Y:
         fig.box(BAND_X0, y - ROW_H / 2, SIZE[0] - BAND_X0 - 4, ROW_H, fill=GROUP_GREY, radius=6, name='row band')

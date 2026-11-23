@@ -31,6 +31,7 @@ NOTE = dict(size=6.5, color=GREY)
 
 
 def build(fig):
+    background(fig)
     fig.panel_title(4, 12, 'a', 'Scale, shift and gate for every layer')
 
     # --- inputs: the condition (a target property) and the flow time, each through a small pre-processing box

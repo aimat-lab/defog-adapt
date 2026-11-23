@@ -42,6 +42,7 @@ def cross(fig, x, y, s=2.6):
 
 
 def build(fig):
+    background(fig)
     # --- the zones and the checkpoints
     fig.box(X0 - 8, ZONE_Y0, X_WARM - X0 + 8, ZONE_Y1 - ZONE_Y0, fill=GROUP_GREY, radius=0, name='warm-up')
     fig.text((X0 - 8 + X_WARM) / 2, ZONE_Y0 + 10, 'warm-up: no resampling', justify='center', **NOTE)

@@ -24,6 +24,7 @@ NOTE = dict(size=6.5, color=GREY)
 
 
 def build(fig):
+    background(fig)
     # --- the size model, fed by the target
     fig.emoji('💧', X_SIZE + SIZE_W / 2, 42, size=11)
     fig.text(X_SIZE + SIZE_W / 2, 60, 'target', justify='center', **NOTE)

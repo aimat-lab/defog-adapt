@@ -1,12 +1,13 @@
 """The diagrams on the documentation pages.
 
-Five things go wrong quietly with them. A picture without alt text is nothing to a reader who cannot see it. An SVG that keeps
+Six things go wrong quietly with them. A picture without alt text is nothing to a reader who cannot see it. An SVG that keeps
 live text depends on the reader having the font, so its labels would be set in whatever the browser has instead. An SVG that
-loads something from outside breaks offline and tells a third party who reads the page. A diagram that no page shows is dead
-weight, and a page that shows a missing one is a hole. And a script whose picture was never rebuilt, or a picture without its
-script, can only be found by redrawing. So: every image has alt text, every diagram on a page has a caption, every published
-SVG is self-contained and sized for a page, every diagram is shown, and every script has its SVG and is named in publish.py
-(the one place that rebuilds them).
+loads something from outside breaks offline and tells a third party who reads the page. A figure drawn in black on a
+transparent canvas vanishes on the dark theme of the site. A diagram that no page shows is dead weight, and a page that shows
+a missing one is a hole. And a script whose picture was never rebuilt, or a picture without its script, can only be found by
+redrawing. So: every image has alt text, every diagram on a page has a caption, every published SVG is self-contained, sized
+for a page and on a white card, every diagram is shown, and every script has its SVG and is named in publish.py (the one place
+that rebuilds them).
 """
 import ast
 import re
@@ -76,6 +77,23 @@ def test_a_published_diagram_is_self_contained_and_sized_for_a_page(svg):
     canvas = float(root["viewBox"].split()[2])
     assert float(root["width"]) >= 1.9 * canvas, \
         f"the SVG is {root['width']} wide on a canvas of {canvas}: its labels would be small on a page (src/publish.py enlarges it)"
+
+
+@pytest.mark.parametrize("svg", sorted(DIAGRAMS.glob("*.svg")), ids=lambda p: p.name)
+def test_a_published_diagram_has_a_white_card_over_its_whole_canvas(svg):
+    """The tool's SVG is transparent and the figures are drawn in black: on the dark theme of the site they would vanish."""
+    text = svg.read_text(encoding="utf-8")
+    element = re.search(r'<(?:path|rect)\b[^>]*\bid="background"[^>]*>', text, flags=re.S)
+    assert element, "no background card: the figure is black on a transparent canvas and would vanish on a dark page"
+    assert re.search(r'\bfill="#(?:ffffff|fff)"', element.group(0), flags=re.I), "the background card is not white"
+    width, height = (float(v) for v in svg_root(svg)["viewBox"].split()[2:4])
+    d = re.search(r'\bd="([^"]*)"', element.group(0))
+    if d:                                               # path data: pairs of coordinates after the commands
+        numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", d.group(1))]
+        assert (max(numbers[0::2]), max(numbers[1::2])) == (width, height), "the background card does not cover the canvas"
+    else:
+        assert (float(re.search(r'\bwidth="([\d.]+)"', element.group(0)).group(1)),
+                float(re.search(r'\bheight="([\d.]+)"', element.group(0)).group(1))) == (width, height)
 
 
 def scripts_in_publish():

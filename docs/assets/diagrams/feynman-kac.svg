@@ -2494,6 +2494,10 @@
   <g
      id="Layer_1"
      data-name="Layer 1">
+    <path
+       id="background"
+       d="M6 0 L434 0 C437.314 0 440 2.686 440 6 L440 208 C440 211.314 437.314 214 434 214 L6 214 C2.686 214 0 211.314 0 208 L0 6 C0 2.686 2.686 0 6 0 Z"
+       fill="#ffffff" />
     <rect
        id="warm-up"
        x="38"

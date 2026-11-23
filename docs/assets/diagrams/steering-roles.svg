@@ -355,6 +355,10 @@
   <g
      id="Layer_1"
      data-name="Layer 1">
+    <path
+       id="background"
+       d="M6 0 L434 0 C437.314 0 440 2.686 440 6 L440 142 C440 145.314 437.314 148 434 148 L6 148 C2.686 148 0 145.314 0 142 L0 6 C0 2.686 2.686 0 6 0 Z"
+       fill="#ffffff" />
     <image
        id="emoji__"
        data-name="emoji 💧"
