@@ -1,15 +1,18 @@
 """The diagrams on the documentation pages.
 
-Six things go wrong quietly with them. A picture without alt text is nothing to a reader who cannot see it. An SVG that keeps
+Seven things go wrong quietly with them. A picture without alt text is nothing to a reader who cannot see it. An SVG that keeps
 live text depends on the reader having the font, so its labels would be set in whatever the browser has instead. An SVG that
 loads something from outside breaks offline and tells a third party who reads the page. A figure drawn in black on a
 transparent canvas vanishes on the dark theme of the site. A diagram that no page shows is dead weight, and a page that shows
-a missing one is a hole. And a script whose picture was never rebuilt, or a picture without its script, can only be found by
-redrawing. So: every image has alt text, every diagram on a page has a caption, every published SVG is self-contained, sized
-for a page and on a white card, every diagram is shown, and every script has its SVG and is named in publish.py (the one place
-that rebuilds them).
+a missing one is a hole. A script whose picture was never rebuilt, or a picture without its script, can only be found by
+redrawing. And the Steer-guide figure states what a run needs and what is optional, which is a claim about the library: it
+stays true only while the classes it names exist and the signatures agree. So: every image has alt text, every diagram on a page has a caption, every published SVG is self-contained, sized
+for a page and on a white card, every diagram is shown, every script has its SVG and is named in publish.py (the one place
+that rebuilds them), and every class and every required/optional mark in the Steer-guide figure matches the code.
 """
 import ast
+import importlib
+import inspect
 import re
 from pathlib import Path
 
@@ -115,3 +118,54 @@ def test_every_diagram_script_has_its_svg_and_publish_py_names_them_all():
     published = {p.stem for p in DIAGRAMS.glob("*.svg")}
     assert published == set(drawn.values()), \
         f"SVGs without a script: {sorted(published - set(drawn.values()))}; scripts without an SVG: {sorted(set(drawn.values()) - published)}"
+
+
+# ----------------------------------------------------------------------- what the Steer-guide figure claims about the code
+def parts_table():
+    """The cards of the Steer-guide figure, {key: (name, class, required)}, read from the table at the top of its script
+    (the script itself needs the figure toolchain, which a test environment does not have)."""
+    tree = ast.parse((SRC / "steering_roles.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "PARTS" for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("steering_roles.py has no PARTS table")
+
+
+def required_parameters(function):
+    parameters = inspect.signature(function).parameters
+    return {name for name, p in parameters.items()
+            if name != "self" and p.default is p.empty and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)}
+
+
+def test_the_guide_figure_names_classes_that_exist():
+    pytest.importorskip("torch")
+    core = importlib.import_module("defog_adapt.core")
+    table = parts_table()
+    assert len(table) >= 4, "the PARTS table of the guide figure lost cards"
+    for key, (name, cls, _required) in table.items():
+        assert hasattr(core, cls), f"the figure shows {cls} for the {name}, but defog_adapt.core does not export it"
+
+
+def test_what_the_guide_figure_marks_required_or_optional_is_so_in_the_code():
+    pytest.importorskip("torch")
+    from defog_adapt.core import AdaptedSampler, ConditionBranch, FeynmanKacSampler, Sampler
+    needed = {
+        # every sampler is built on a base model
+        "base": "model" in required_parameters(Sampler.__init__),
+        # an adapter-only run is an AdaptedSampler on a composition of branches, and a branch cannot do without its adapter
+        "adapter": "adapter" in required_parameters(ConditionBranch.__init__)
+                   and "composition" in required_parameters(AdaptedSampler.__init__),
+        # the ruler belongs to Feynman-Kac: an adapter-only run takes no energy at all ...
+        "ruler": "energy_fn" in required_parameters(AdaptedSampler.__init__),
+        # ... and the size model is the optional `size_dist` of every sampler's sample()
+        "size": "size_dist" in required_parameters(Sampler.sample),
+    }
+    table = parts_table()
+    assert set(needed) == set(table), f"the figure has the cards {sorted(table)}, this test knows {sorted(needed)}"
+    for key, required in needed.items():
+        name, cls, marked = table[key]
+        assert marked is required, (f"the figure marks the {name} ({cls}) as {'required' if marked else 'optional'}, "
+                                    f"but in the code it is {'required' if required else 'optional'}")
+    # the other half of 'the ruler is optional': the Feynman-Kac sampler it belongs to does need an energy
+    assert "energy_fn" in required_parameters(FeynmanKacSampler.__init__), \
+        "the figure puts the ruler in the Feynman-Kac add-on, but FeynmanKacSampler no longer requires an energy"

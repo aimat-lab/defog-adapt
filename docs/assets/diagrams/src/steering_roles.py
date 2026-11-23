@@ -1,9 +1,10 @@
-"""Who does what when steering toward a target (Guides, "Steer toward a target").
+"""What a steered run needs, and what of it is optional (Guides, "Steer toward a target").
 
-The size model draws the number of atoms from P(n | target). Inside the Feynman-Kac sampler the proposal (the frozen base with
-the adapter) generates candidates, the ruler (the property head) scores each candidate's predicted clean graph, and the
-candidates are resampled; that loop is repeated at every checkpoint. Afterwards RDKit decodes the graphs and the judge
-measures the true property of each molecule. The ruler steers the run; it is not a measurement.
+The main flow is solid: the proposal (a frozen base model with an adapter on it) generates the molecules. Around it, dashed
+frames mark what a run can do without: a size model that draws the number of atoms, a Feynman-Kac add-on whose ruler (a
+property head) scores each candidate and resamples, and a judge that measures the decoded molecules (RDKit, a better model, or
+nothing at all). Each card says what it is, its class, whether it is required and whether it is a file you load. The ruler
+steers the run; it is not a measurement.
 
 Build:  python3 $FIGURE_SKILL/scripts/build.py docs/assets/diagrams/src/steering_roles.py [--final]
 """
@@ -11,66 +12,96 @@ from figlib import *  # noqa: F401,F403
 from vocab import *  # noqa: F401,F403
 
 NAME = 'steering-roles'
-SIZE = (440, 148)
+SIZE = (440, 218)
 
-# -- layout (pt)
-Y = 90                                        # the centre line of the stages
-X_SIZE, SIZE_W, SIZE_H = 8, 64, 32            # the size model
-GROUP = (104, 14, 222, 128)                   # the sampler: x, y, w, h
-X_PROP, MW, MH = 118, 40, 32                  # the proposal (frozen base with the adapter docked)
-X_RULER, RW, RH = 248, 48, 36                 # the ruler (the property head)
-X_JUDGE, JUDGE_W, JUDGE_H = 356, 78, 54
-NOTE = dict(size=6.5, color=GREY)
+# -- layout (pt). Every position derives from these numbers.
+ROW_Y, ROW_H = 22, 84                     # the main row: top edge of the cards (where the pills sit) and their height
+MID_Y = ROW_Y + ROW_H / 2                 # the line the arrows of the main row sit on
+SIZE_X, SIZE_W = 8, 84                    # the size model
+PROP_X, PROP_W = 124, 190                 # the proposal
+JUDGE_X, JUDGE_W = 346, 86                # the judge
+FK_Y, FK_H = 136, 60                      # the Feynman-Kac add-on, below the proposal
+LEGEND_Y = 207
+# What each card says: (name, class, required). tests/test_diagrams.py ties every class to defog_adapt.core and every
+# required/optional mark to the signatures of the samplers, so a rename or a changed default shows up there.
+PARTS = {
+    'adapter': ('Adapter', 'CrossAttentionAdapter', True),
+    'base': ('Base model', 'DeFoGModel', True),
+    'ruler': ('Property head', 'PropertyHead', False),
+    'size': ('Size model', 'LearnedSizeDistribution', False),
+}
+NOTE = dict(size=6.3, color=GREY)
+CLASS = dict(size=6.0, color=GREY)
+ROLE = dict(size=6.5, font='rcm')         # what a part does: generates, steers, measures
+
+
+def name_class_tag(fig, x, y, name, cls, required, extra='· file'):
+    """Three lines at x, the first on the baseline y: the name, the class and the required/optional tag."""
+    fig.text(x, y, name, size=7, font='rcm')
+    fig.text(x, y + 8, cls, **CLASS)
+    tag(fig, x, y + 16, required=required, extra=extra)
 
 
 def build(fig):
     background(fig)
-    # --- the size model, fed by the target
-    fig.emoji('💧', X_SIZE + SIZE_W / 2, 42, size=11)
-    fig.text(X_SIZE + SIZE_W / 2, 60, 'target', justify='center', **NOTE)
-    fig.line(X_SIZE + SIZE_W / 2, 65, X_SIZE + SIZE_W / 2, Y - SIZE_H / 2, sw=STYLE['arrow_sw'], name='into size model')
-    fig.box(X_SIZE, Y - SIZE_H / 2, SIZE_W, SIZE_H, fill=PILL_GREY, radius=5, name='size model')
-    fig.text(X_SIZE + SIZE_W / 2, Y + 2.6, 'Size model', justify='center', size=7, font='rcm')
-    fig.rich(X_SIZE + SIZE_W / 2, Y + 29, [('P', 'mi'), ('(', 'mr'), ('n', 'mi'), SP, ('|', 'mm'), SP, ('target', 'rc'), (')', 'mr')],
-             size=7, color=GREY, justify='center')
-    fig.arrow([(X_SIZE + SIZE_W + 3, Y), (GROUP[0] - 2, Y)], head=3.2)
-    fig.text((X_SIZE + SIZE_W + GROUP[0]) / 2, Y - 6, 'n atoms', justify='center', **NOTE)
 
-    # --- the sampler: a proposal and a ruler in a loop
-    gx, gy, gw, gh = GROUP
-    fig.group(gx, gy, gw, gh, label='Feynman-Kac sampler')
-    ym = Y - MH / 2
-    frozen_model(fig, X_PROP, ym, MW, MH, '')
-    ax = X_PROP + 0.36 * MW
-    top = ym + MH * 0.38 / 2 * (ax - X_PROP) / MW
-    a_top = top - 4 - 15
-    adapter_block(fig, ax, a_top)
-    fig.line(ax, a_top + 15, ax, top, sw=1.1, name='adapter into base')
-    fig.emoji('💧', ax, a_top - 7, size=8)
-    fig.pill(X_PROP + MW / 2, 38, 'Proposal', fill=ADAPTER_FILL, anchor='center')
-    fig.text(X_PROP + MW / 2, Y + 30, 'base + adapter', justify='center', **NOTE)
+    # --- the size model (optional): draws the number of atoms from P(n | target)
+    name, cls, required = PARTS['size']
+    fig.panel(SIZE_X, ROW_Y, SIZE_W, ROW_H, name, fill=PILL_GREY)
+    fig.emoji('💧', SIZE_X + 14, ROW_Y + 24, size=9)
+    base_y = ROW_Y + 40
+    fig.line(SIZE_X + 28, base_y, SIZE_X + 63, base_y, stroke=LABEL_GREY, sw=0.6, name='axis')
+    for k, h in enumerate((5, 11, 16, 10, 4)):
+        fig.rect(SIZE_X + 30 + 7 * k, base_y - h, 5, h, radius=0.8, fill=GREY, stroke='none', name='size bar')
+    fig.text(SIZE_X + SIZE_W / 2, ROW_Y + 50, 'draws the number', justify='center', **NOTE)
+    fig.text(SIZE_X + SIZE_W / 2, ROW_Y + 58, 'of atoms', justify='center', **NOTE)
+    fig.text(SIZE_X + SIZE_W / 2, ROW_Y + 69, cls, justify='center', **CLASS)
+    word = text_width(('required' if required else 'optional') + ' · file', 6.0) + 6
+    tag(fig, SIZE_X + SIZE_W / 2 - word / 2, ROW_Y + 78, required=required, extra='· file')
+    fig.arrow([(SIZE_X + SIZE_W + 3, MID_Y), (PROP_X - 3, MID_Y)], head=3.0)
+    fig.text((SIZE_X + SIZE_W + PROP_X) / 2, MID_Y - 6, 'n atoms', justify='center', **NOTE)
 
-    fig.model(X_RULER, Y - RH / 2, RW, RH, 'Property\nhead', fill=FK_FILL, font='rcm', size=7, name='ruler')
-    fig.emoji('💧', X_RULER + 12, Y - RH / 2 - 8, size=8)
-    fig.pill(X_RULER + RW / 2, 38, 'Ruler', fill=FK_FILL, anchor='center')
-    fig.text(X_RULER + RW / 2, Y + 30, 'steers the run', justify='center', size=6.5, font='rcm', color=BLACK)
+    # --- the proposal (required): an adapter on a frozen base model, both files you load
+    fig.card(PROP_X, ROW_Y, PROP_W, ROW_H, name='proposal')
+    fig.pill(PROP_X + 8, ROW_Y, 'Proposal', fill=ADAPTER_FILL)
+    mx, my, mw, mh = PROP_X + 32, ROW_Y + 32, 40, 34
+    frozen_model(fig, mx, my, mw, mh, '')
+    ax, a_top = dock_adapter(fig, mx, my, mw, mh)
+    fig.emoji('💧', mx - 7, a_top + 7.5, size=9)
+    lx = PROP_X + 88                                           # the column of labels
+    fig.line(ax + 14, a_top + 7.5, lx - 4, a_top + 7.5, stroke=LABEL_GREY, sw=0.6, name='leader')
+    fig.line(mx + mw + 3, my + mh / 2, lx - 4, my + mh / 2, stroke=LABEL_GREY, sw=0.6, name='leader')
+    name_class_tag(fig, lx, a_top + 7.5 - 4.5, *PARTS['adapter'])
+    name_class_tag(fig, lx, my + mh / 2 - 4.5, *PARTS['base'])
+    fig.text(PROP_X + PROP_W / 2, ROW_Y + ROW_H - 6, 'generates the molecules', justify='center', **ROLE)
 
-    # the loop: candidates go to the ruler (upper arrow), the resampled ones come back (lower arrow)
-    up, dn = Y - 6, Y + 7
-    x0, x1 = X_PROP + MW + 3, X_RULER - 3
-    mid = (x0 + x1) / 2
-    fig.arrow([(x0, up), (x1, up)], head=3.0)
-    fig.text(mid, up - 5, 'predicted clean graphs', justify='center', **NOTE)
-    fig.arrow([(x1, dn), (x0, dn)], head=3.0)
-    fig.badge(mid, dn, 5.0, [('↻', 'mm')], size=6.5)
-    fig.text(mid, dn + 15, 'resample at checkpoints', justify='center', **NOTE)
+    # --- the judge (optional): measures the decoded molecules
+    fig.arrow([(PROP_X + PROP_W + 3, MID_Y), (JUDGE_X - 3, MID_Y)], head=3.0)
+    fig.text((PROP_X + PROP_W + JUDGE_X) / 2, MID_Y - 6, 'decode', justify='center', **NOTE)
+    fig.panel(JUDGE_X, ROW_Y, JUDGE_W, ROW_H, 'Judge', fill=PILL_GREY)
+    jx = JUDGE_X + JUDGE_W / 2
+    fig.text(jx, ROW_Y + 26, 'RDKit', justify='center', size=7, font='rcm')
+    fig.text(jx, ROW_Y + 35, 'or a better model,', justify='center', **NOTE)
+    fig.text(jx, ROW_Y + 43, 'or no check at all', justify='center', **NOTE)
+    fig.text(jx, ROW_Y + 58, 'measures the run', justify='center', **ROLE)
+    word = text_width('optional', 6.0) + 6
+    tag(fig, jx - word / 2, ROW_Y + 77, required=False)
 
-    # --- the judge: decode, then measure the true property
-    fig.arrow([(gx + gw + 3, Y), (X_JUDGE - 2, Y)], head=3.2)
-    fig.text((gx + gw + X_JUDGE) / 2, Y - 6, 'decode', justify='center', **NOTE)
-    fig.card(X_JUDGE, Y - JUDGE_H / 2, JUDGE_W, JUDGE_H, fill=WHITE, name='judge')
-    fig.text(X_JUDGE + JUDGE_W / 2, Y - 5, 'RDKit', justify='center', size=7.5, font='rcm')
-    fig.text(X_JUDGE + JUDGE_W / 2, Y + 6, 'true property', justify='center', size=6.3)
-    fig.text(X_JUDGE + JUDGE_W / 2, Y + 14.5, 'validity, uniqueness', justify='center', size=6.3)
-    fig.pill(X_JUDGE + JUDGE_W / 2, 38, 'Judge', anchor='center')
-    fig.text(X_JUDGE + JUDGE_W / 2, Y + 40, 'measures the run', justify='center', size=6.5, font='rcm', color=BLACK)
+    # --- the Feynman-Kac add-on (optional): a ruler scores the candidates, the proposal resamples them
+    fig.panel(PROP_X, FK_Y, PROP_W, FK_H, 'Feynman-Kac steering', fill=FK_FILL)
+    rx, ry, rw, rh = PROP_X + 14, FK_Y + 20, 44, 34
+    fig.model(rx, ry, rw, rh, None, fill=FK_FILL, name='ruler')
+    fig.emoji('💧', rx + 8, ry - 6, size=8)
+    name_class_tag(fig, lx - 14, FK_Y + 27, *PARTS['ruler'])
+    fig.text(lx - 14, FK_Y + 54, 'steers the run', **ROLE)
+    xd, xu = PROP_X + 124, PROP_X + 164                          # the two arrows between the proposal and the ruler
+    y0, y1 = ROW_Y + ROW_H + 2, FK_Y - 1
+    fig.arrow([(xd, y0), (xd, y1)], head=3.0)
+    fig.text(xd - 4, (y0 + y1) / 2 + 2.3, 'predicted clean graphs', justify='right', **NOTE)
+    fig.arrow([(xu, y1), (xu, y0)], head=3.0)
+    fig.badge(xu, (y0 + y1) / 2, 5.0, [('↻', 'mm')], size=6.5)
+    fig.text(xu + 8, (y0 + y1) / 2 + 2.3, 'resample', **NOTE)
+
+    # --- legend
+    fig.legend(LEGEND_Y, [(*required_symbol(), 'required'), (*optional_symbol(), 'optional'),
+                          (*target_symbol(), 'gets the target value')], x0=70, x1=370)

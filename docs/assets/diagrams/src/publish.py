@@ -18,7 +18,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent
 SKILL = Path(os.environ["FIGURE_SKILL"]) if "FIGURE_SKILL" in os.environ else None
-SCRIPTS = ["tools_overview", "adapter_modulation", "feynman_kac", "steering_roles"]
+SCRIPTS = ["recorded_pipeline", "adapter_modulation", "feynman_kac", "steering_roles"]
 SCALE = 2.0          # the published SVG is this many times larger than its canvas in pt
 
 

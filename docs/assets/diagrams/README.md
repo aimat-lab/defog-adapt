@@ -1,20 +1,22 @@
 # The diagrams
 
-Four schematic diagrams on the documentation pages. They show how the pieces work; they are **not measurements**: the molecules, the
+Four schematic diagrams on the documentation pages. They show how the pieces fit; they are **not measurements**: the molecules, the
 weights and the parents in them are drawn for illustration.
 
 | diagram | page | what it says |
 |---|---|---|
-| `tools-overview.svg` | Concepts, overview | which tool acts when: the adapter is trained once beside a frozen base and acts at every step, Feynman-Kac steering trains nothing, RL changes the weights |
-| `adapter-modulation.svg` | Concepts, Adapters | what the adapter modulates: a scale, a shift and a gate for every layer of the frozen base, and atoms reading the condition |
+| `recorded-pipeline.svg` | Concepts, overview | the recorded pipeline in order: train the base, optional RL cleanup, train an adapter on the frozen base, optional RL on the adapter, then sample, with optional Feynman-Kac steering |
+| `adapter-modulation.svg` | Concepts, Adapters | how an adapter plugs in: the target and the flow time go into a small adapter, which gives every layer of the frozen base a scale, a shift and a gate |
 | `feynman-kac.svg` | Concepts, Steering | K candidates, a warm-up without resampling, then checkpoints where heavy candidates are cloned and light ones dropped |
-| `steering-roles.svg` | Guides, Steer toward a target | who does what: the size model, the proposal, the ruler (the property head, which steers) and the judge (RDKit, which measures) |
+| `steering-roles.svg` | Guides, Steer toward a target | what a steered run needs and what is optional: the proposal (base model and adapter) is required; the size model, the Feynman-Kac add-on with its property head, and the judge are optional |
 
 ## The vocabulary
 
 It is the README banner's. A frozen model is a white trapezoid with pale blue stripes and a snowflake badge; the adapter is an
-orange block with a flame; a model whose weights change carries a delta-W badge. Feynman-Kac steering is cyan and RL fine-tuning
-purple. The molecules are small hand-made graphs, drawn so that no two slots in a figure show the same one (`src/vocab.py`).
+orange block; a model whose weights change carries a delta-W badge. Feynman-Kac steering is cyan and RL fine-tuning purple.
+In the pipeline and the guide a solid card is a required part and a dashed frame an optional one, and a droplet marks where the
+target value goes in. The molecules are small hand-made graphs, drawn so that no two slots in a figure show the same one
+(`src/vocab.py`).
 
 Each diagram is drawn in black on a white card (the shape named `background`), so that it reads on the dark theme of the site
 as well; there is no separate dark variant. `tests/test_diagrams.py` checks that the card is there and covers the canvas.
@@ -34,6 +36,9 @@ as well; there is no separate dark variant. `tests/test_diagrams.py` checks that
 FIGURE_SKILL=/path/to/figure-toolchain python3 docs/assets/diagrams/src/publish.py            # all four
 FIGURE_SKILL=/path/to/figure-toolchain python3 docs/assets/diagrams/src/publish.py feynman_kac # one
 ```
+
+The classes named in `steering-roles.svg` and what it marks as required or optional are a table at the top of its script
+(`PARTS`), which `tests/test_diagrams.py` checks against the library, so a rename or a changed default is caught there.
 
 The drawing uses the author's figure toolchain (figlib and VectorCraft, found through `$FIGURE_SKILL`), which is not published,
 together with Inkscape. So the SVG files are the artefacts to reuse; the scripts document exactly how they were made. The

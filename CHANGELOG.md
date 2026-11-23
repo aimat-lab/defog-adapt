@@ -26,8 +26,9 @@ Import name `defog_adapt`. Code only: no model weights ship.
   comparison behind the README's results figure).
 - `docs/`: the documentation, built as a Material for MkDocs site: concepts (adapters, steering, RL), guides, reference
   (main classes, recipes, migration) and about (limits, results and caveats, contributing, citation). Four diagrams
-  (`docs/assets/diagrams/`) explain the three tools, what an adapter modulates, Feynman-Kac steering and who does what when
-  steering; they are schematic, drawn from scripts, and their text is outlines so that they need no font.
+  (`docs/assets/diagrams/`) show the recorded pipeline, how an adapter plugs in, Feynman-Kac steering, and what a steered
+  run needs and what is optional in it; they are schematic, drawn from scripts, and their text is outlines so that they
+  need no font.
 - The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
   model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
   over three seeds (`docs/about/results-and-caveats.md`; `docs/assets/results_logp.json` holds the data and

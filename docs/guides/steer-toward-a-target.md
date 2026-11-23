@@ -5,17 +5,25 @@ steering on top. For what the pieces are, see [Concepts](../concepts/index.md).
 
 ## What you need
 
+**Required**
+
 - **A base model and an adapter** trained for the property: see [Train an adapter](train-an-adapter.md).
-- **A property head**, the ruler that Feynman-Kac scores each candidate with.
+
+**Optional**
+
 - **A size model**, which draws the number of atoms from `P(n | target)` instead of from the dataset's overall
   distribution. It is a bias correction on the size draw.
+- **For Feynman-Kac steering, a property head**, the ruler that scores each candidate. An adapter-only run needs
+  neither the head nor Feynman-Kac.
+- **A judge**, which measures the decoded molecules. RDKit is what the recorded numbers used, a better model also
+  works, and you can leave the check out if you trust the generation.
 
 The `fit_property_head__zinc.py` recipe fits the head and, with `--with-size-model`, the size model. Fit both under
 the same label convention as the adapter.
 
-![Diagram of who does what when steering toward a target. A size model draws the number of atoms for the target. In the Feynman-Kac sampler, the proposal, which is the frozen base with the adapter, generates candidates, the ruler, a property head, scores their predicted clean graphs, and the candidates are resampled at checkpoints. Afterwards RDKit decodes the graphs and the judge measures the true property, validity and uniqueness.](../assets/diagrams/steering-roles.svg)
+![Diagram of what a steered run needs. In the solid main flow, a proposal, which is a frozen base model with an adapter on it, generates the molecules; the base model and the adapter are both required files. Dashed frames mark what is optional: a size model that draws the number of atoms; a Feynman-Kac add-on in which a property head, the ruler, scores the predicted clean graphs and the candidates are resampled; and a judge that measures the decoded molecules, with RDKit, with a better model or not at all. The classes shown are DeFoGModel, CrossAttentionAdapter, PropertyHead and LearnedSizeDistribution.](../assets/diagrams/steering-roles.svg)
 
-*Who does what. The ruler steers the run and the judge measures it: score a run with RDKit on the decoded molecules, never with the property head.*
+*What a steered run needs. Solid frames are required and dashed frames optional. The ruler steers the run and the judge measures it: the property head is the ruler, never the judge.*
 
 ## The assembly
 
@@ -49,8 +57,9 @@ removes finite-sample bias; to lower the error further, raise `beta`, at a cost 
 
 ## Judge the result on the decoded molecule
 
-Decode the graphs, compute the **true** property of each decoded molecule with RDKit, and report it beside validity and
-uniqueness. The property head is the steering ruler, not a measurement: do not score a run with it. Feynman-Kac trades
+The judge is optional. If you use one, decode the graphs, compute the **true** property of each decoded molecule (with
+RDKit, as the recorded numbers did), and report it beside validity and uniqueness. The property head is the steering
+ruler, not a measurement: do not score a run with it. Feynman-Kac trades
 diversity for accuracy, so a better error with a lower uniqueness is the expected trade, not a free gain.
 `steer_zinc.py --evaluate` follows the shape of the protocol the recorded numbers used.
 

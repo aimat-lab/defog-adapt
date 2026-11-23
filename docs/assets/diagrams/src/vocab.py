@@ -108,10 +108,25 @@ def live_model(fig, x, y, w, h, fill, label='', taper=0.38, size=7.5, delta=True
         fig.badge(bx, by, badge_r, [('Δ', 'mm'), ('W', 'mi')], size=5.4)
 
 
-def adapter_block(fig, cx, top, w=24, h=15, flame=9.5, name='adapter'):
-    """The flame adapter: an orange block that narrows downwards, docking on a model from above."""
+def adapter_block(fig, cx, top, w=24, h=15, flame=None, name='adapter'):
+    """The adapter: an orange block that narrows downwards, docking on a model from above. The banner's flame goes on it
+    only where `flame` gives its size; the explanatory figures name the adapter in words instead."""
     fig.model(cx - w / 2, top, w, h, '', taper=0.38, direction='down', fill=ADAPTER_FILL, name=name)
-    fig.emoji('🔥', cx, top + 0.45 * h, size=flame)
+    if flame:
+        fig.emoji('🔥', cx, top + 0.45 * h, size=flame)
+
+
+def dock_adapter(fig, x, y, w, h, taper=0.38, frac=0.36, delta=False, name='adapter'):
+    """Dock the adapter on the top edge of the model trapezoid (x, y, w, h), as the banner does: an orange block above it,
+    joined by a short line. Returns the adapter's centre x and its top y. `delta` adds the weights-change badge."""
+    ax = x + frac * w
+    top = model_top_y(ax, x, y, w, h, taper)
+    a_top = top - 4 - 15
+    adapter_block(fig, ax, a_top, name=name)
+    fig.line(ax, a_top + 15, ax, top, sw=1.1, name=f'{name} into base')
+    if delta:
+        fig.badge(ax + 15.5, a_top + 5, 5.4, [('Δ', 'mm'), ('W', 'mi')], size=5.0)
+    return ax, a_top
 
 
 # ----------------------------------------------------------------------------------------------- small molecules
@@ -248,3 +263,59 @@ def delta_symbol():
     def draw(fig, x, y):
         fig.badge(x + 5.5, y, 5.5, [('Δ', 'mm'), ('W', 'mi')], size=5.0)
     return draw, 11
+
+
+# ------------------------------------------------------------------------ required and optional (the guide and the pipeline)
+# A required part is a solid card with a shadow, an optional one a dashed frame that lets the background through.
+def tag(fig, x, y, required=True, extra='', size=6.0):
+    """'● required' or '○ optional', then `extra` (for example '· file'): left aligned at x, on the baseline y."""
+    word = 'required' if required else 'optional'
+    cy = y - 0.36 * size
+    if required:
+        fig.ellipse(x + 1.7, cy, 1.7, fill=BLACK, stroke='none', name=f'{word} dot')
+    else:
+        fig.ellipse(x + 1.7, cy, 1.5, fill=WHITE, stroke=GREY, sw=0.8, name=f'{word} dot')
+    return fig.text(x + 6, y, f'{word} {extra}'.strip(), size=size, color=BLACK if required else GREY)
+
+
+def required_symbol():
+    """Legend symbol: a small solid card."""
+    def draw(fig, x, y):
+        fig.rect(x, y - 3.8, 12, 7.6, radius=2, fill=WHITE, stroke=BLACK, sw=1.0, effects=[shadow(0.6, opacity=30)],
+                 name='required')
+    return draw, 12
+
+
+def optional_symbol():
+    """Legend symbol: a small dashed frame."""
+    def draw(fig, x, y):
+        fig.rect(x, y - 3.8, 12, 7.6, radius=2, fill='none', stroke=BLACK, sw=0.9, dash=[3, 1.4], name='optional')
+    return draw, 12
+
+
+def target_symbol():
+    """Legend symbol: the droplet that marks where the target value goes in."""
+    def draw(fig, x, y):
+        fig.emoji('💧', x + 4.5, y, size=9)
+    return draw, 9
+
+
+def cross(fig, x, y, s=2.6, name='dropped'):
+    """A candidate that is dropped: a small cross drawn with lines (the font has no ✕)."""
+    for d in (-1, 1):
+        fig.line(x - s, y - s * d, x + s, y + s * d, stroke=DGREY, sw=1.1, cap='round', name=name)
+
+
+def fk_glyph(fig, x, y, w=44, gap=9.0):
+    """Feynman-Kac in miniature, as in the steering figure: three candidates side by side, a checkpoint where one is
+    dropped (cross) and its place is taken by a copy of its neighbour (cyan). (x, y) is the left end of the middle line."""
+    xc, jump = x + 0.40 * w, 13
+    for dy in (-gap, 0, gap):
+        fig.ellipse(x, y + dy, 1.4, fill=BLACK, stroke='none', name='start')
+    fig.line(x, y - gap, xc, y - gap, sw=1.0, name='candidate')
+    fig.line(x, y, x + w, y, sw=1.0, name='candidate')
+    fig.line(x, y + gap, x + w, y + gap, sw=1.0, name='candidate')
+    fig.line(xc, y - gap - 5, xc, y + gap + 5, stroke=LABEL_GREY, sw=0.6, dash=[2, 2], name='checkpoint')
+    cross(fig, xc + 2.4, y - gap, s=2.3)
+    fig.path([(xc, y), (xc + jump, y - gap)], stroke=FK_LINE, sw=1.3, name='clone')
+    fig.line(xc + jump, y - gap, x + w, y - gap, sw=1.0, name='candidate')
