@@ -11,6 +11,10 @@ the base transformer's node (`X`), edge (`E`) and global (`y`) streams: gated Fi
 adaLN-Zero. The gate heads are zero-initialised, so **an untrained adapter reproduces the base exactly,
 bit for bit**.
 
+![Diagram of an adapter in two panels. In the first, the condition, through Fourier bands, and the flow time, through an embedding, go into the adapter, which returns a scale, a shift and a gate for every layer of the frozen base; these modulate the layer's node, edge and global streams, and the gate starts at zero. In the second, each atom reads the condition tokens by cross-attention, for the nodes only.](../assets/diagrams/adapter-modulation.svg)
+
+*What an adapter modulates. (a) A scale, a shift and a gate for the node (X), edge (E) and global (y) streams of every layer. (b) Each atom also reads the condition by cross-attention. A schematic.*
+
 Two additions to the FiLM trunk carry the recorded results:
 
 * **Node-to-condition cross-attention** (`xattn_tokens`, `xattn_dim`, `xattn_heads`). Each atom queries the

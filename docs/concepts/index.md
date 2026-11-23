@@ -11,6 +11,10 @@ is; the [guides](../guides/train-an-adapter.md) show how to use them.
 | [Feynman-Kac steering](#feynman-kac-steering) | Nothing: the generator is neither trained nor changed. | Sampling time only. |
 | [RL fine-tuning](#rl-fine-tuning) | The weights of the base model or of an adapter. | Training. Sampling afterwards needs no reward. |
 
+![Diagram with one row for each of three tools and two columns, training and sampling. The adapter is trained once beside a frozen base and then acts at every sampling step. Feynman-Kac steering trains nothing and resamples candidates while sampling. RL fine-tuning changes the model's weights in a loop of sampling, reward and update, and needs no reward when sampling afterwards.](../assets/diagrams/tools-overview.svg)
+
+*The three tools and when each acts. A snowflake marks weights that stay frozen and ΔW weights that change. A schematic, not a measurement.*
+
 ## Adapters
 
 An adapter is a small network that reads the target (say, logP = 4) and the flow time, and turns them into a

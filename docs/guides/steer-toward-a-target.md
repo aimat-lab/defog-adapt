@@ -13,6 +13,10 @@ steering on top. For what the pieces are, see [Concepts](../concepts/index.md).
 The `fit_property_head__zinc.py` recipe fits the head and, with `--with-size-model`, the size model. Fit both under
 the same label convention as the adapter.
 
+![Diagram of who does what when steering toward a target. A size model draws the number of atoms for the target. In the Feynman-Kac sampler, the proposal, which is the frozen base with the adapter, generates candidates, the ruler, a property head, scores their predicted clean graphs, and the candidates are resampled at checkpoints. Afterwards RDKit decodes the graphs and the judge measures the true property, validity and uniqueness.](../assets/diagrams/steering-roles.svg)
+
+*Who does what. The ruler steers the run and the judge measures it: score a run with RDKit on the decoded molecules, never with the property head.*
+
 ## The assembly
 
 --8<-- "README.md:fk_steering"

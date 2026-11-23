@@ -14,6 +14,10 @@ proposal can be the base model alone or an adapter composition. The ensemble cor
 particle that happens to head toward the target takes over, which attacks both failure modes of plug-in
 guidance (undershooting, and reward hacking within a mode).
 
+![Diagram of Feynman-Kac steering with six candidates that denoise side by side from noise to molecule. Nothing is resampled during the warm-up. At three checkpoints late in the run each candidate gets a weight from how far its predicted clean graph is from the target; low-weight candidates are dropped and high-weight ones are cloned.](../assets/diagrams/feynman-kac.svg)
+
+*Feynman-Kac steering with six candidates. After the warm-up, the heavy candidates are cloned (cyan) and the light ones dropped (✕) at each checkpoint. Weights, parents and molecules are drawn for illustration, not taken from a run.*
+
 ```python
 from defog_adapt.core import (AdapterComposition, ConditionBranch, FeynmanKacSampler,
                               LearnedPropertyEnergy, StandardisedEnergy)
