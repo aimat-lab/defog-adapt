@@ -9,6 +9,7 @@ Most checks read files, so they run anywhere. The build itself runs only where t
 (``pip install --group docs``); CI builds the site in its own workflow.
 """
 import importlib.util
+import json
 import os
 import posixpath
 import re
@@ -163,6 +164,84 @@ def test_the_workflow_cannot_publish_by_accident():
     assert "inputs.deploy" in condition and "vars.DOCS_DEPLOY == 'true'" in condition, \
         "publishing must be switched on deliberately, by a ticked box or a repository variable"
     assert "pull_request" not in condition
+
+
+# ============================================================ the results figure on the Home page
+# The Home page shows the README's results figure with the README's caption. The figure is drawn from a data file
+# (docs/assets/results_logp.json, which is not part of the site), and the README's numbers are checked against it by
+# tests/test_results_figure.py. These tests do the same for the Home page, and keep the two sentences that must travel
+# with the figure: each approach was trained once, and a gap smaller than the recorded spread is not an ordering.
+RESULTS_DATA = ROOT / "docs" / "assets" / "results_logp.json"
+ARMS = ("base", "conditional", "film", "xattn", "xattn_fk")
+BLOB = "https://github.com/aimat-lab/defog-adapt/blob/main/"
+needs_results = pytest.mark.skipif(not RESULTS_DATA.exists() or not (ROOT / "README.md").exists(),
+                                   reason="the results data file and the README are not part of an installed wheel")
+
+
+def squash(text):
+    return " ".join(text.split())
+
+
+def readme_figure():
+    """The README's alt text and the caption under its results figure, with the caption's links made absolute."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    alt = re.search(r'results_logp\.png" alt="([^"]*)"', readme).group(1)
+    section = readme[readme.index("Results at a glance"):]
+    section = section[:section.index("\n## ")]
+    caption = section.split("</p>", 1)[1].replace("](docs/", f"]({BLOB}docs/")
+    return squash(alt), squash(caption)
+
+
+def home_figure():
+    """The alt text of the figure on the Home page, and the text under it up to the next heading."""
+    home = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
+    image = re.search(r"!\[([^\]]*)\]\(assets/results_logp\.png\)", home)
+    assert image, "the Home page does not show the results figure (assets/results_logp.png)"
+    return squash(image.group(1)), squash(re.split(r"\n## ", home[image.end():], maxsplit=1)[0])
+
+
+def results_arms():
+    return json.loads(RESULTS_DATA.read_text(encoding="utf-8"))["arms"]
+
+
+def recorded_spread():
+    """The difference between two trainings of one adapter recipe, as docs/caveats.md records it."""
+    caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
+    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error", caveats).group(1)
+
+
+@needs_results
+def test_the_home_page_shows_the_figure_with_the_readme_alt_text_and_caption():
+    readme_alt, readme_caption = readme_figure()
+    home_alt, home_text = home_figure()
+    assert home_alt == readme_alt, "the alt text of the figure on the Home page is not the README's"
+    assert readme_caption in home_text, "the text under the figure on the Home page is not the README's caption"
+
+
+@needs_results
+def test_the_numbers_the_home_page_quotes_are_the_data_files_and_its_two_hedging_sentences_are_there():
+    arms, (alt, caption) = results_arms(), home_figure()
+    assert sorted(re.findall(r"\d\.\d{3}", alt)) == sorted(f"{arms[arm]['mae_mean']:.3f}" for arm in ARMS)
+    assert f"uniqueness {arms['xattn_fk']['uniqueness_mean']:.2f}" in caption
+    gap, spread = f"{arms['xattn_fk']['mae_mean'] - arms['conditional']['mae_mean']:.3f}", recorded_spread()
+    assert float(gap) < float(spread), "the caption's 'smaller than' would be wrong: the sentence needs rewriting"
+    # the two sentences that must travel with the figure: without them the whiskers read as more certainty than there is
+    assert "Each approach was trained once" in caption
+    assert (f"the {gap} between the end-to-end model and the steered adapter is smaller than the {spread} recorded "
+            f"between two trainings of one adapter recipe, so this comparison does not order those two") in caption
+
+
+@needs_results
+def test_no_site_page_calls_the_end_to_end_model_the_most_accurate_while_its_lead_is_inside_the_spread():
+    """The wording the first version of the results text carried; the notes' own caveats say it is not established."""
+    arms = results_arms()
+    gap = arms["xattn_fk"]["mae_mean"] - arms["conditional"]["mae_mean"]
+    if gap >= float(recorded_spread()):
+        pytest.skip("the lead is larger than the recorded spread, so the plain wording would be supported")
+    for page in sorted(nav_pages()):
+        text = squash((ROOT / "docs" / page).read_text(encoding="utf-8"))
+        for claim in ("most accurate", "more accurate than any"):
+            assert claim not in text, f"{page} says {claim!r}, but the lead over Feynman-Kac ({gap:.3f}) is inside the spread"
 
 
 # ============================================================ the build
