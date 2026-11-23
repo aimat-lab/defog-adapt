@@ -18,4 +18,4 @@ Only the latest release receives fixes. Until 1.0 the API can change between min
 code**. Only load checkpoints you trust, and never one from an unknown source. This is how PyTorch checkpoints that
 hold Python objects work, so it is not a vulnerability in this package, but it is the thing to be careful with. The
 file format and the compatibility rules are in
-[`docs/adapters.md`](docs/adapters.md#file-format-compatibility-and-trust).
+[`docs/concepts/adapters.md`](docs/concepts/adapters.md#file-format-compatibility-and-trust).

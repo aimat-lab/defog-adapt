@@ -39,7 +39,7 @@ def anchors(path):
 
 def test_the_documentation_exists():
     names = {p.name for p in DOC_FILES}
-    for required in ("README.md", "adapters.md", "steering.md", "rl.md", "results.md", "caveats.md", "migration.md"):
+    for required in ("README.md", "adapters.md", "steering.md", "rl.md", "results-and-caveats.md", "migration.md"):
         assert required in names, f"missing documentation file {required}"
 
 
@@ -86,9 +86,9 @@ def test_every_relative_link_and_anchor_resolves(path):
 
 
 # ============================================================ the documentation site
-# The pages under docs/ that the site publishes (see mkdocs.yml) link to the detailed notes by absolute GitHub URL,
-# include code from the README and the notes, and show commands. Each of those can rot without a relative link
-# breaking, so each is checked here. tests/test_docs_site.py checks the site's own configuration and build.
+# The pages under docs/ (all of them are on the site, see mkdocs.yml) link to files that are not pages by absolute GitHub
+# URL, include code from the README and the Adapters page, and show commands. Each of those can rot without a relative
+# link breaking, so each is checked here. tests/test_docs_site.py checks the site's own configuration and build.
 REPO = "https://github.com/aimat-lab/defog-adapt"
 GITHUB_LINK = re.compile(re.escape(REPO) + r"/(?:blob|tree)/main/([^)\s#]+)(#[^)\s]*)?")
 
@@ -182,6 +182,18 @@ def test_the_recipes_page_lists_every_recipe_and_only_real_ones():
                                f"listed there but not in examples/: {sorted(listed - scripts)}")
 
 
+EXAMPLES_README = ROOT / "examples" / "README.md"
+
+
+@pytest.mark.skipif(not EXAMPLES_README.exists(), reason="examples/ is not part of an installed wheel")
+def test_the_examples_readme_points_at_the_recipes_page_and_names_every_script():
+    """GitHub shows this file when someone opens the folder: it must lead to the Recipes page and forget no script."""
+    text = EXAMPLES_README.read_text(encoding="utf-8")
+    assert "docs/reference/recipes.md" in text, "examples/README.md does not point at the Recipes page"
+    missing = sorted(p.name for p in (ROOT / "examples").glob("*.py") if p.name not in text)
+    assert not missing, f"examples/README.md does not name {missing}"
+
+
 MAIN_CLASSES = ROOT / "docs" / "reference" / "main-classes.md"
 
 
@@ -217,7 +229,7 @@ def test_the_main_classes_page_lists_every_preset():
 
 def test_the_anchor_slugger_agrees_with_github_on_the_headings_this_repo_links_to():
     for heading, expected in [
-        ("6. RL on adapters", "6-rl-on-adapters"),
+        ("Where steering does not work", "where-steering-does-not-work"),
         ("File format, compatibility and trust", "file-format-compatibility-and-trust"),
         ("What the condition means: the label convention", "what-the-condition-means-the-label-convention"),
         ("The adapter base is a re-packaged checkpoint", "the-adapter-base-is-a-re-packaged-checkpoint"),

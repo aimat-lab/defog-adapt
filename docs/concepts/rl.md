@@ -3,7 +3,7 @@
 Two uses, one estimator: **structural RL on an unconditional base** (fewer disconnected fragments and odd
 rings) and **RL on an adapter** (tighter conditioning). Both fine-tune against a reward on the *generated*
 molecule, which can be non-differentiable: an RDKit property, a connectivity check, a learned head. Results
-are in [results.md](results.md) and the limits in [caveats.md](caveats.md); read both before relying on a gain.
+and limits are on [Results and caveats](../about/results-and-caveats.md); read it before relying on a gain.
 
 ## The estimator: GDPO's eager policy gradient
 
@@ -146,11 +146,11 @@ the size.
 ### What does not add
 
 RL on an adapter and Feynman-Kac steering correct the same error. On top of FK the RL increment was not
-significant (see [results.md](results.md#6-rl-on-adapters)). Pick the cheaper one for your use, or use both and
+significant (a research-fork result; see [the earlier numbers](../about/results-and-caveats.md#the-earlier-numbers)). Pick the cheaper one for your use, or use both and
 do not expect the sum.
 
 ## Other estimators
 
 The research fork also tried ratio-matching (RAM), adjoint matching (DAM), a likelihood-free DiffusionNFT
 estimator and credit assignment. None has a positive result and none is in this package; the reasons are in
-[migration.md](migration.md#what-was-removed).
+[Migrating from the research fork](../reference/migration.md#what-was-removed).

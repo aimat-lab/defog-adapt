@@ -5,13 +5,13 @@
 ``results_logp.json`` is the summary that ``examples/compare_arms__zinc.py summarize`` writes for the held-out
 test pass (ZINC250k, 100 targets drawn from real molecules, 10 generations each, three seeds); this script only
 draws it. The numbers live there, with their protocol, so a chart cannot drift from the data it shows. They are
-discussed, with what they do not support, in docs/results.md and docs/caveats.md.
+discussed, with what they do not support, in docs/about/results-and-caveats.md.
 
 Form: one arm is the point (Feynman-Kac on the cross-attention adapter, the end of the progression), so it is
 drawn in the accent and the rest in the de-emphasis gray. The two approaches without an adapter (the unconditional
 base, and a model trained end to end on the condition) sit above a hairline, the three adapter arms below it, and a
 small header names each group. Every bar is labelled with its mean and sd over the sampling seeds, and the whisker is
-the same sd, so there is no legend and no axis ticks; the table view is docs/results.md. The protocol, and that each
+the same sd, so there is no legend and no axis ticks; the table view is docs/about/results-and-caveats.md. The protocol, and that each
 approach was trained once, are in the footer, so the figure does not claim more certainty than it has when it is seen
 on its own.
 

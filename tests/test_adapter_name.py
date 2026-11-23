@@ -3,7 +3,7 @@
 The rename is safe only because of three facts, and each is pinned here: the old name is the SAME object (so fork code,
 the migration guide and the parity gate, which calls the research package's class by its old name on both sides, keep
 working); a checkpoint stores no class name (so every existing adapter, and the ones being trained now, loads under
-either); and the FiLM-only adapter the comparison in docs/results.md calls an arm of its own is this class too, with
+either); and the FiLM-only adapter the comparison in docs/about/results-and-caveats.md calls an arm of its own is this class too, with
 the cross-attention and the Fourier bands switched off.
 """
 

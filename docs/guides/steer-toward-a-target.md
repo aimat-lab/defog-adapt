@@ -1,7 +1,7 @@
 # Steer toward a target
 
 This guide samples molecules whose property is close to a target, from a trained base and adapter, with Feynman-Kac
-steering on top. For what the pieces are, see [Concepts](../concepts.md).
+steering on top. For what the pieces are, see [Concepts](../concepts/index.md).
 
 ## What you need
 
@@ -56,4 +56,4 @@ Give `steer_zinc.py` several `--property` groups, each with its own adapter, hea
 by `--mode`, either `product` or `mean`. Which one is better depends on the pair of properties, so try both rather
 than hard-coding one.
 
-Details: [steering.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/steering.md).
+Details: [Steering at sampling time](../concepts/steering.md).

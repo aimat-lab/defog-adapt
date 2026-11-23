@@ -1,9 +1,9 @@
-"""The documentation site stays buildable, short and portable.
+"""The documentation site stays buildable, complete and portable.
 
-``mkdocs.yml`` publishes the high-level pages of ``docs/`` and leaves the detailed notes (adapters, steering, RL,
-caveats, results, migration) in the repository. Four things go wrong quietly with a site like that: a page is added
-and never reaches the nav, a detailed note is published by a typo in the exclusion list, the configuration grows a
-feature the successor of Material for MkDocs cannot read, and the workflow gains a way to publish by accident.
+``mkdocs.yml`` publishes every page of ``docs/``; only the scripts and data that build the banner and the results figure
+are left out. Four things go wrong quietly with a site like that: a page is added and never reaches the nav, a page is
+left off the site by an entry in the exclusion list, the configuration grows a feature the successor of Material for
+MkDocs cannot read, and the workflow gains a way to publish by accident.
 
 Most checks read files, so they run anywhere. The build itself runs only where the docs dependency group is installed
 (``pip install --group docs``); CI builds the site in its own workflow.
@@ -29,8 +29,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG_FILE = ROOT / "mkdocs.yml"
 WORKFLOW_FILE = ROOT / ".github" / "workflows" / "docs.yml"
 
-#: the detailed notes: readable in the repository, not published on the site
-DETAILED_NOTES = {"adapters.md", "steering.md", "rl.md", "caveats.md", "results.md", "migration.md"}
+#: the notes that used to sit next to the site's pages in docs/ and are pages of the site now, in their folders
+MOVED_NOTES = {"concepts/adapters.md", "concepts/steering.md", "concepts/rl.md", "reference/migration.md",
+               "about/results-and-caveats.md"}
+#: where they were: a copy left at one of these paths would be an unpublished page that nobody reads
+OLD_PATHS = {"adapters.md", "steering.md", "rl.md", "caveats.md", "results.md", "migration.md", "concepts.md"}
 
 pytestmark = pytest.mark.skipif(not CONFIG_FILE.exists(), reason="mkdocs.yml is not part of an installed wheel")
 
@@ -78,9 +81,10 @@ def markdown_pages():
 
 
 def built_path(site, relative):
-    """Where the build puts a docs file: a page ``a/b.md`` becomes ``a/b/index.html``, anything else stays as it is."""
-    if relative == "index.md":
-        return site / "index.html"
+    """Where the build puts a docs file: a page ``a/b.md`` becomes ``a/b/index.html``, a folder's own page ``a/index.md``
+    becomes ``a/index.html``, anything else stays as it is."""
+    if relative == "index.md" or relative.endswith("/index.md"):
+        return site / (relative[:-len("index.md")] + "index.html")
     return site / (relative[:-3] + "/index.html") if relative.endswith(".md") else site / relative
 
 
@@ -94,12 +98,21 @@ def test_every_published_page_is_in_the_nav_and_every_nav_page_exists():
     assert len(in_nav) >= 10, "the nav was parsed into too few pages: has its format changed?"
 
 
-def test_the_detailed_notes_stay_in_the_repository_but_off_the_site():
+def test_the_notes_are_pages_of_the_site_and_their_old_paths_are_gone():
+    in_nav = nav_pages()
+    assert MOVED_NOTES <= in_nav, f"not in the nav: {sorted(MOVED_NOTES - in_nav)}"
+    assert not MOVED_NOTES & excluded_files(), f"left off the site by exclude_docs: {sorted(MOVED_NOTES & excluded_files())}"
+    back = {name for name in OLD_PATHS if (ROOT / "docs" / name).exists()}
+    assert not back, f"the notes were moved into the site's folders, but these old files are back: {sorted(back)}"
+
+
+def test_exclude_docs_leaves_out_only_the_banner_and_the_figure_data_never_a_page_of_text():
+    """A page that is excluded and left out of the nav is silently unpublished; the build says nothing about it."""
     excluded = excluded_files()
-    assert DETAILED_NOTES <= excluded, f"published by accident: {sorted(DETAILED_NOTES - excluded)}"
     for name in excluded:
         assert (ROOT / "docs" / name).is_file(), \
             f"exclude_docs names {name}, which does not exist: a typo here would publish the real file"
+        assert not name.endswith(".md") or name.startswith("assets/"), f"{name} is a page of the docs but is left off the site"
 
 
 def test_the_nav_keeps_the_changelog_as_a_link_not_a_page():
@@ -173,7 +186,6 @@ def test_the_workflow_cannot_publish_by_accident():
 # with the figure: each approach was trained once, and a gap smaller than the recorded spread is not an ordering.
 RESULTS_DATA = ROOT / "docs" / "assets" / "results_logp.json"
 ARMS = ("base", "conditional", "film", "xattn", "xattn_fk")
-BLOB = "https://github.com/aimat-lab/defog-adapt/blob/main/"
 needs_results = pytest.mark.skipif(not RESULTS_DATA.exists() or not (ROOT / "README.md").exists(),
                                    reason="the results data file and the README are not part of an installed wheel")
 
@@ -183,12 +195,12 @@ def squash(text):
 
 
 def readme_figure():
-    """The README's alt text and the caption under its results figure, with the caption's links made absolute."""
+    """The README's alt text and the caption under its results figure, with the caption's links made relative to docs/."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     alt = re.search(r'results_logp\.png" alt="([^"]*)"', readme).group(1)
     section = readme[readme.index("Results at a glance"):]
     section = section[:section.index("\n## ")]
-    caption = section.split("</p>", 1)[1].replace("](docs/", f"]({BLOB}docs/")
+    caption = section.split("</p>", 1)[1].replace("](docs/", "](")
     return squash(alt), squash(caption)
 
 
@@ -211,9 +223,9 @@ def results_arms():
 
 
 def recorded_spread():
-    """The difference between two trainings of one adapter recipe, as docs/caveats.md records it."""
-    caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
-    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error", caveats).group(1)
+    """The difference between two trainings of one adapter recipe, as the results page records it."""
+    page = (ROOT / "docs" / "about" / "results-and-caveats.md").read_text(encoding="utf-8")
+    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error", page).group(1)
 
 
 @needs_results

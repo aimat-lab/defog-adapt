@@ -2,7 +2,7 @@
 
 Everything here acts on a trained model **without retraining it**: Feynman-Kac particle steering, learned
 node-count draws, composing several properties, substructure inpainting, and a spectral energy. For the
-adapters that supply the conditioning, see [adapters.md](adapters.md); for the numbers, [results.md](results.md).
+adapters that supply the conditioning, see [Adapters](adapters.md); for the numbers, [Results and caveats](../about/results-and-caveats.md).
 
 ## Feynman-Kac steering
 
@@ -144,7 +144,7 @@ graphs = sampler.sample(8, n_free=8)
 default about 10% of the steps, every `jump_interval` steps) and re-denoises, `n_resample` times per jump point,
 giving the free region repeated chances to harmonise with the core at the boundary. It costs extra forward passes
 and helps mainly on hard cores. A core plus `n_free` that exceeds the model's `max_nodes` is refused. The evidence for this feature is thin: see
-[caveats.md](caveats.md#features-with-thin-evidence).
+[Results and caveats](../about/results-and-caveats.md#features-with-thin-evidence).
 
 ## A spectral energy
 
@@ -168,4 +168,4 @@ absence request). Band shortfalls are normalised by the band's `scale`, for the 
 exists: an un-normalised squared error on a fraction of total absorption lands near 1e-3, the weights stay
 uniform, and three different requests return byte-identical molecules. An unreachable request degrades
 gracefully (the weights never concentrate, and the closest molecules found are returned). The evidence is thin:
-see [caveats.md](caveats.md#features-with-thin-evidence).
+see [Results and caveats](../about/results-and-caveats.md#features-with-thin-evidence).

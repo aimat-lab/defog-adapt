@@ -18,10 +18,10 @@ purpose. Do not re-add a feature without evidence that it works, and say what th
 - `tests/` CPU-only unit tests; `tests/parity/` opt-in comparison against golden outputs of the research repo;
   `tests/test_recipes.py` opt-in smoke runs of every recipe
 - `examples/` the quickstart, the PyComex recipes (optional `recipes` extra) and `steer_zinc.py`, the assembly
-- `docs/` adapters, steering, rl, results, caveats, migration
-- `mkdocs.yml`, `docs/{index,getting-started,concepts}.md`, `docs/{guides,reference,about}/` the documentation site
-  (Material for MkDocs): the short, high-level version. The six detailed notes above are excluded from it on purpose,
-  and code on its pages is included from the README and the notes by `--8<--` markers, never copied
+- `docs/` the documentation: Home and Getting started, `concepts/` (overview, adapters, steering, RL), `guides/`,
+  `reference/` (main classes, recipes, migration) and `about/` (limits, results and caveats, contributing, citation)
+- `mkdocs.yml` the documentation site (Material for MkDocs). Every page of `docs/` is in its nav, and code on its pages is
+  included from the README and `docs/concepts/adapters.md` by `--8<--` markers, never copied
 
 ## Commands
 
@@ -49,9 +49,9 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
 - **Examples must run.** A recipe that is not run has already rotted. Keep `tests/test_recipes.py` green when
   the library API changes, and assert on a recipe's own output, not on PyComex's banner (it varies by version).
 - **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
-  in one and every link and anchor. Every number in `docs/results.md` needs a source and its protocol.
-- **The site stays the short version.** A new page goes in the nav of `mkdocs.yml`, detail stays in the notes, and a
-  number on the site has the same source as in `docs/results.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
+  in one and every link and anchor. Every number on `docs/about/results-and-caveats.md` needs a source and its protocol.
+- **The site is the documentation.** Every page of `docs/` is in the nav of `mkdocs.yml`, and a number on any page has
+  the same source as on `docs/about/results-and-caveats.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
   `tests/test_docs_site.py` guard the nav, the exclusions, the includes and the config. Keep the config portable (no
   hooks, no plugin beyond search, publish through the Pages artifact flow, never `gh-deploy`): Material for MkDocs
   ends on 2027-05-05 and its successor reads the same file. Publishing is dormant until the repository is public.

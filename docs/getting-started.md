@@ -40,7 +40,7 @@ In this output the mean logP lands close to each target: about 0 for the first a
 
 ## Where next
 
-- [Concepts](concepts.md): what adapters, Feynman-Kac steering and RL fine-tuning are, in one page.
+- [Concepts](concepts/index.md): what adapters, Feynman-Kac steering and RL fine-tuning are, in one page.
 - [Train an adapter](guides/train-an-adapter.md) and [Steer toward a target](guides/steer-toward-a-target.md): the
   same steps on real data.
 - [Recipes](reference/recipes.md): the scripts that train the models this page only imitates.

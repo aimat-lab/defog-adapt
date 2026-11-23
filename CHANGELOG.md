@@ -17,17 +17,18 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - **GDPO fine-tuning**: `GDPOTrainer`, `AdapterGDPOTrainer` and the rewards that were used with them
   (`SanityReward`, `PropertyMatchReward`, `HeadPropertyMatchReward`, `WeightedSanityPropertyReward`).
 - **Inpainting** (`InpaintingSampler`, `SubgraphConstraint`) and a **spectrum energy** (`SpectrumEnergy`,
-  `Band`): thin evidence, see `docs/caveats.md`.
+  `Band`): thin evidence, see `docs/about/results-and-caveats.md`.
 - **Molecules**: encode and decode, validity and distribution metrics, `morgan_condition`, kekulized
   representations, and reference-split loaders for ZINC250k, MOSES and ChEMBL.
 - `defog_adapt.presets`: the recorded recipes as plain data.
 - `examples/`: a CPU quickstart, PyComex recipes (E1 base training, optionally end to end on a property and, with
   `MICRO_BATCH_SIZE`, with the recorded batch accumulated on a 24 GB GPU; structural RL, adapter training, adapter RL), the property-head script, `steer_zinc.py` (the assembly) and `compare_arms__zinc.py` (the
   comparison behind the README's results figure).
-- `docs/`: adapters, steering, RL, results, caveats, migration.
+- `docs/`: the documentation, built as a Material for MkDocs site: concepts (adapters, steering, RL), guides, reference
+  (main classes, recipes, migration) and about (limits, results and caveats, contributing, citation).
 - The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
   model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
-  over three seeds (`docs/results.md` section 9; `docs/assets/results_logp.json` holds the data and
+  over three seeds (`docs/about/results-and-caveats.md`; `docs/assets/results_logp.json` holds the data and
   `docs/assets/results_logp.py` draws it, in a light and a dark variant).
 - `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
   adapter, from the same noise), its recorded trajectory and the scripts that made it.
@@ -54,7 +55,7 @@ Import name `defog_adapt`. Code only: no model weights ship.
 Features with a null, negative, superseded or untried result: the other RL estimators (RAM, DAM, NFT), credit
 assignment, distribution-fidelity penalties, the guidance family and its samplers, autoguidance, the refinement
 sampler, the spectrum condition encoder, interior adapters, Feynman-Kac rejuvenation and beta schedules, and the
-GuacaMol reference loader. The complete list, with reasons, is in `docs/migration.md`. Checkpoints that need a
+GuacaMol reference loader. The complete list, with reasons, is in `docs/reference/migration.md`. Checkpoints that need a
 removed feature raise an error that says so instead of loading a different model.
 
 ### Verified

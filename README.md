@@ -11,7 +11,7 @@
 Steer a frozen [DeFoG](https://arxiv.org/abs/2410.04263) discrete flow-matching graph generator toward a property
 target with small swappable **adapters**, inference-time **Feynman-Kac steering** and **reinforcement-learning
 fine-tuning**. Molecules are the validated domain, and only features with a recorded positive result are included
-([what was left out, and why](docs/migration.md#what-was-removed)).
+([what was left out, and why](docs/reference/migration.md#what-was-removed)).
 
 ## 📦 Installation
 
@@ -57,8 +57,8 @@ The model trained end to end on the property had the lowest error. An adapter on
 there, and Feynman-Kac steering closer still, at a cost in sample diversity (uniqueness 0.79, against 1.0 for the
 others). Each approach was trained once, and the 0.035 between the end-to-end model and the steered adapter is smaller
 than the 0.058 recorded between two trainings of one adapter recipe, so this comparison does not order those two. Every
-number, its protocol and what it does not support are in [`docs/results.md`](docs/results.md) and
-[`docs/caveats.md`](docs/caveats.md).
+number, its protocol and what it does not support are on the
+[Results and caveats](docs/about/results-and-caveats.md) page.
 
 ## 🚀 Quickstart
 
@@ -267,11 +267,11 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 
 | | |
 |---|---|
-| [`docs/adapters.md`](docs/adapters.md) | what an adapter is; training, composing, the label convention, the file format |
-| [`docs/steering.md`](docs/steering.md) | Feynman-Kac, choosing `beta`, learned sizes, several properties, inpainting, spectra |
-| [`docs/rl.md`](docs/rl.md) | structural RL and adapter RL; the operating-point and selection traps |
-| [`docs/caveats.md`](docs/caveats.md) | provenance, noise, what is thin, what was removed |
-| [`examples/README.md`](examples/README.md) | the recipes, in pipeline order |
+| [`docs/concepts/adapters.md`](docs/concepts/adapters.md) | what an adapter is; training, composing, the label convention, the file format |
+| [`docs/concepts/steering.md`](docs/concepts/steering.md) | Feynman-Kac, choosing `beta`, learned sizes, several properties, inpainting, spectra |
+| [`docs/concepts/rl.md`](docs/concepts/rl.md) | structural RL and adapter RL; the operating-point and selection traps |
+| [`docs/about/results-and-caveats.md`](docs/about/results-and-caveats.md) | provenance, noise, what is thin, and the headline comparison |
+| [`docs/reference/recipes.md`](docs/reference/recipes.md) | the recipes, in pipeline order |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed in each release |
 
 ## 📝 Citation, relationship to DeFoG and license

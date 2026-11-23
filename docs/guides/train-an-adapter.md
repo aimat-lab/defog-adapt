@@ -1,7 +1,7 @@
 # Train an adapter
 
 This guide trains one adapter, for one property, on top of a trained base model. The recipes train adapters for logP,
-TPSA, QED and SAScore, on ZINC250k. For what an adapter is, see [Concepts](../concepts.md#adapters).
+TPSA, QED and SAScore, on ZINC250k. For what an adapter is, see [Concepts](../concepts/index.md#adapters).
 
 ## Before you start
 
@@ -25,7 +25,7 @@ You need three things, and none of them ships with the package:
 
 The library side is a few lines:
 
---8<-- "docs/adapters.md:train_adapter"
+--8<-- "docs/concepts/adapters.md:train_adapter"
 
 `for_base` builds the recorded architecture and stamps the adapter with a fingerprint of its base, so using it with
 the wrong base fails when the sampler is built. `AdapterModule` freezes the base, keeps it in evaluation mode, trains
@@ -56,4 +56,4 @@ python examples/fit_property_head__zinc.py --base ckpts/zinc_rl2_seed42/best_mod
 
 Then [steer toward a target](steer-toward-a-target.md). To tighten a trained adapter further, the
 `adapter_rl_finetune__zinc.py` recipe fine-tunes it by policy gradient; see the [recipes](../reference/recipes.md).
-Details: [adapters.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/adapters.md).
+Details: [Adapters](../concepts/adapters.md).

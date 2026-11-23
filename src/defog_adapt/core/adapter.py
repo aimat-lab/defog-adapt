@@ -3,7 +3,7 @@ Frozen-base cross-attention / gated-FiLM (adaLN-Zero style) CFG-adapters for DeF
 
 Localize classifier-free guidance to a small, swappable, stackable adapter on a
 FROZEN unconditional base (ControlNet / T2I-Adapter / IP-Adapter family), instead
-of retraining the base per condition. See ``docs/adapters.md``.
+of retraining the base per condition. See ``docs/concepts/adapters.md``.
 
 Mechanism
 ---------
@@ -364,7 +364,7 @@ class CrossAttentionAdapter(nn.Module):
     The name is the recorded architecture (``defog_adapt.presets.ADAPTER_ARCHITECTURE``): a gated-FiLM trunk, plus
     cross-attention from every node to the condition (the half that carries the effect), plus Fourier bands on the
     condition. ``xattn_tokens=0`` and ``cond_fourier=0`` switch the last two off and give the original FiLM-only
-    adapter, which ``docs/results.md`` measures as an arm of its own. The research fork called this class
+    adapter, which ``docs/about/results-and-caveats.md`` measures as an arm of its own. The research fork called this class
     ``AdaLNAdapter``; that name is kept as an alias (below), and no checkpoint stores a class name.
     """
 

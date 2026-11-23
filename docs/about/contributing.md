@@ -7,7 +7,7 @@ Issues and pull requests are welcome. This is the short version;
 
 defog-adapt contains **only features that have a recorded positive result**. What was tried and came out null,
 negative or superseded was left out on purpose
-([what was left out, and why](https://github.com/aimat-lab/defog-adapt/blob/main/docs/migration.md#what-was-removed)).
+([what was left out, and why](../reference/migration.md#what-was-removed)).
 So a new feature has to arrive with its evidence: the protocol, the numbers and their run-to-run noise. Say in the
 pull request what the evidence is. Bug fixes, documentation and tests need no such evidence.
 
@@ -30,9 +30,8 @@ mkdocs serve            # a live preview at http://127.0.0.1:8000
 mkdocs build --strict   # what CI runs: a broken link, or a page missing from the nav, fails the build
 ```
 
-The site is the short, high-level documentation. The detailed notes in `docs/` (adapters, steering, RL, caveats,
-results and migration) stay in the repository and are not published here. Code on these pages is included from the
-README and from those notes, so each snippet has one copy, and the tests check it.
+Every page of `docs/` is part of this site. Code on these pages is included from the README and from the Adapters
+page, so each snippet has one copy, and the tests check it.
 
 ## Pull requests
 

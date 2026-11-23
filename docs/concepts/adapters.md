@@ -2,7 +2,7 @@
 
 A **frozen-base adapter** turns an unconditional DeFoG model into a conditional one without touching the
 unconditional model. This page is the reference for what one is, how it is trained and composed, and the
-ways it can be wrong without raising an error. Measured results are in [results.md](results.md).
+ways it can be wrong without raising an error. Measured results are on [Results and caveats](../about/results-and-caveats.md).
 
 ## What it is
 
@@ -162,4 +162,4 @@ trust**, exactly as you would for any `.pt` file from the internet.
 
 An adapter does not widen what the frozen base can reach: the low end of logP, where steering was weakest, is
 partly the base's reach and partly a wrong atom count that a learned size model recovers. See
-[caveats.md](caveats.md).
+[Results and caveats](../about/results-and-caveats.md#where-steering-does-not-work).

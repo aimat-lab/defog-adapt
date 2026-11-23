@@ -17,7 +17,7 @@ Run the arms and write one JSON per (arm, seed), then summarise a directory of t
         --xattn XATTN.ckpt --xattn-weight 1.5 --head HEAD.ckpt --size SIZE.ckpt --seeds 42
     python examples/compare_arms__zinc.py summarize OUT
 
-The protocol is the benchmark's (docs/results.md, "Protocols"): ``--targets`` target values drawn from the
+The protocol is the benchmark's (docs/about/results-and-caveats.md, "How it was measured"): ``--targets`` target values drawn from the
 real molecules of a split, ``--n`` generations per target, and the error is the pooled mean absolute
 difference between each valid generation's logP, read off the DECODED graph, and its target. The seed
 fixes the targets, so every arm of a seed sees the same ones. Everything else is the recorded conditional
@@ -31,8 +31,8 @@ Three choices that a number from this script depends on:
   marginal. ``--no-size-model`` puts every arm on the marginal.
 * The conditional model is sampled at guidance weight 1 by default. That is the exact conditional it was
   trained to be, and it needs no blend: a model like this is guided, if at all, by blending rate matrices,
-  which was measured to break above weight 1 for adapters (docs/results.md, "Probability-space
-  blending"). ``--conditional-weight`` exists so that this is measured, not assumed.
+  which was measured to break above weight 1 for adapters (docs/about/results-and-caveats.md, "What these
+  numbers do and do not show"). ``--conditional-weight`` exists so that this is measured, not assumed.
 * ``--split test`` is the held-out split: one evaluation pass, with every setting frozen on validation. A
   result is refused for reuse if it was made under any other configuration.
 """

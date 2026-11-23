@@ -7,9 +7,9 @@ the checks, and what they guard.
 
 `defog-adapt` deliberately contains **only features that have a recorded positive result**. Things that were tried
 and came out null, negative or superseded are left out on purpose; the list, with the reasons, is in
-[`docs/migration.md`](docs/migration.md#what-was-removed). So a new feature has to arrive with its evidence: the
+[`docs/reference/migration.md`](docs/reference/migration.md#what-was-removed). So a new feature has to arrive with its evidence: the
 protocol, the numbers and their run-to-run noise. Say in the pull request what the evidence is, and add the number
-to [`docs/results.md`](docs/results.md) with its source. Bug fixes, documentation and tests need no such evidence.
+to [`docs/about/results-and-caveats.md`](docs/about/results-and-caveats.md) with its source. Bug fixes, documentation and tests need no such evidence.
 
 ## Setting up
 
@@ -35,7 +35,7 @@ DEFOG_ADAPT_HOME=/path/to/data DEFOG_ADAPT_CKPTS=/path/to/ckpts python -m pytest
 
 ## The documentation site
 
-The short, high-level documentation is a [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) site
+The documentation is a [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) site
 (`mkdocs.yml` and the pages under `docs/`). It has a dependency group of its own and needs no PyTorch:
 
 ```bash
@@ -44,11 +44,10 @@ mkdocs serve             # a live preview at http://127.0.0.1:8000
 mkdocs build --strict    # what CI runs: a broken link, a missing snippet or a page that is not in the nav fails it
 ```
 
-The build prints a notice about MkDocs 2.0; set `NO_MKDOCS_2_WARNING=1` to hide it. The six detailed notes in `docs/`
-(`adapters.md`, `steering.md`, `rl.md`, `caveats.md`, `results.md`, `migration.md`) stay in the repository and are left
-off the site on purpose (`exclude_docs` in `mkdocs.yml`). Code on the site pages is included from the README and from
-those notes with `--8<--` markers, so that there is one tested copy: keep the markers where they are when you edit
-that code. Nothing is published yet, because GitHub Pages needs a public repository.
+The build prints a notice about MkDocs 2.0; set `NO_MKDOCS_2_WARNING=1` to hide it. Every page of `docs/` is part of the
+site (the nav is in `mkdocs.yml`; `exclude_docs` leaves out only the scripts and data that build the banner and the
+figure). Code on the site pages is included from the README and from `docs/concepts/adapters.md` with `--8<--` markers,
+so that there is one tested copy: keep the markers where they are when you edit that code. Nothing is published yet, because GitHub Pages needs a public repository.
 
 ## Rules the checks enforce
 
@@ -58,8 +57,8 @@ that code. Nothing is published yet, because GitHub Pages needs a public reposit
   executed by `tests/test_readme_quickstart.py`; keep it, and `tests/test_recipes.py`, green when the API changes.
 - **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import in one,
   and resolves every link and anchor, every snippet include, every GitHub link to this repository and every
-  `python examples/...` command. `tests/test_docs_site.py` and `mkdocs build --strict` check the site. Every number in
-  `docs/results.md` needs a source and its protocol.
+  `python examples/...` command. `tests/test_docs_site.py` and `mkdocs build --strict` check the site. Every number on
+  `docs/about/results-and-caveats.md` needs a source and its protocol.
 - **Checkpoint compatibility.** Every config key present in existing checkpoints stays accepted; a removed feature
   accepts only its neutral value and otherwise raises a clear error.
 - **Dependency floors are tested, not guessed.** The suite passes with every dependency at its minimum on Python
