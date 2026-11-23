@@ -10,7 +10,7 @@ discussed, with what they do not support, in docs/results.md and docs/caveats.md
 Form: one arm is the point (Feynman-Kac on the cross-attention adapter, the end of the progression), so it is
 drawn in the accent and the rest in the de-emphasis gray. The two references (nothing steering the base, and a
 model trained end to end on the condition) sit above a hairline, the three adapter arms below it. Every bar is
-labelled with its mean and sd over seeds, and the whisker is the same sd, so there is no legend and no axis
+labelled with its mean and sd over the sampling seeds, and the whisker is the same sd, so there is no legend and no axis
 ticks; the table view is docs/results.md. Colours and ink are the dataviz reference palette's light surface.
 """
 import json
@@ -79,7 +79,8 @@ def main(data_path: Path, out: Path) -> None:
     ax.text(24, 30, "Error to the logP target, by approach (lower is better)", fontsize=15 * px,
             fontweight="medium", color=INK, va="baseline")
     ax.text(24, 52, f"ZINC250k {protocol['split']} split, {protocol['n_targets']} targets × "
-                    f"{protocol['n_per_target']} generations. Bars: mean over {n_seeds} seeds; whiskers: ±1 sd.",
+                    f"{protocol['n_per_target']} generations. Bars: mean over {n_seeds} sampling seeds, one trained "
+                    f"model per approach; whiskers: ±1 sd.",
             fontsize=12 * px, color=INK2, va="baseline")
 
     y = ROW0

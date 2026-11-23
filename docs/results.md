@@ -301,7 +301,8 @@ it was trained with the recipes in `examples/` and measured with `examples/compa
 It is the comparison behind the figure in the README, and the data behind that figure is
 [`assets/results_logp.json`](assets/results_logp.json).
 
-ZINC250k, logP, **held-out test split**, 100 targets × 10 generations, mean ± sd over three seeds. Lower error is better.
+ZINC250k, logP, **held-out test split**, 100 targets × 10 generations, mean ± sd over three sampling seeds (each approach was trained once). Lower error is
+better.
 
 | approach | what it is | setting | logP error | validity | uniqueness |
 |---|---|---|---|---|---|
@@ -317,10 +318,12 @@ adapter rows.
 
 **Reading it.**
 
-* The model trained end to end on logP is the most accurate, on every seed. Steering a frozen base comes close:
-  Feynman-Kac is 0.0351 ± 0.0078 behind it and the adapter alone 0.0911 ± 0.0091 (paired per seed, behind on all three).
+* The model trained end to end on logP has the lowest error here, below every other approach on every sampling seed.
+  Its lead over the adapter alone, 0.0911 ± 0.0091 (paired per seed), is larger than the 0.058 recorded between two
+  trainings of one adapter recipe (section 3). Its lead over the adapter with Feynman-Kac, 0.0351 ± 0.0078, is smaller,
+  so this comparison does not order those two (see *What these numbers do and do not show*).
 * Measured from the unconditional base to the end-to-end model, the cross-attention adapter closes about 92% of the
-  distance and Feynman-Kac about 97%; the FiLM adapter, at the same training budget, about 76%.
+  distance and Feynman-Kac about 97%; the FiLM adapter, at the same training budget, about 75%.
 * The cross-attention adapter beats the FiLM adapter by 0.1736 ± 0.0198 (on all three seeds), and Feynman-Kac improves
   the same adapter by 0.0560 ± 0.0089 (on all three seeds).
 * Validity is 0.983 to 0.991 for every conditional approach (0.996 for the base). Uniqueness is 1.000 everywhere except
