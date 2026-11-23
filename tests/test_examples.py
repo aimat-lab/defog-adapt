@@ -108,9 +108,9 @@ def test_the_feynman_kac_energy_is_standardised_by_the_heads_own_std(steer, smal
     """The point of StandardisedEnergy: beta is dimensionless only if the energy is divided by the
     property's variance. Wiring the raw energy in would still run, and would make beta mean something
     different for every property."""
-    from defog_adapt.core import AdaLNAdapter, AdaptedSampler, FeynmanKacSampler, StandardisedEnergy
+    from defog_adapt.core import CrossAttentionAdapter, AdaptedSampler, FeynmanKacSampler, StandardisedEnergy
 
-    adapter = AdaLNAdapter.for_base(small_model, cond_dim=1, hidden=16, cond_mean=[2.0], cond_std=[1.0])
+    adapter = CrossAttentionAdapter.for_base(small_model, cond_dim=1, hidden=16, cond_mean=[2.0], cond_std=[1.0])
     head = fake_head(mean=2.0, std=1.16)
     head_spec = spec(steer, head=head, adapter=adapter)
     kwargs = dict(mode="product", ctmc=dict(sample_steps=4), beta=7.5, domain=None, atom_enc={}, bond_enc={})
@@ -138,9 +138,9 @@ def test_the_feynman_kac_energy_is_standardised_by_the_heads_own_std(steer, smal
 
 
 def test_without_a_head_the_energy_falls_back_to_the_closed_form_property(steer, small_model):
-    from defog_adapt.core import AdaLNAdapter, MoleculePropertyEnergy
+    from defog_adapt.core import CrossAttentionAdapter, MoleculePropertyEnergy
 
-    adapter = AdaLNAdapter.for_base(small_model, cond_dim=1, hidden=16, cond_mean=[2.0], cond_std=[1.5])
+    adapter = CrossAttentionAdapter.for_base(small_model, cond_dim=1, hidden=16, cond_mean=[2.0], cond_std=[1.5])
     fk = steer.build_sampler(small_model, [spec(steer, adapter=adapter)], method="fk", mode="product",
                              ctmc=dict(sample_steps=4), beta=20.0, domain=None, atom_enc={}, bond_enc={})
     energy, scale, _ = fk.energy_fn.terms[0]

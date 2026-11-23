@@ -12,7 +12,7 @@ They are OPT-IN, because they need what a clean checkout does not have:
 * ``DEFOG_ADAPT_CKPTS``  a directory with ``zinc_e1_seed42_kek.ckpt`` (an E1 base), ``zinc_kek_base.ckpt``
                          (the base the adapters sit on), ``logp_xattn_adapter.ckpt`` and
                          ``heads_kek/logp_head.ckpt`` + ``heads_kek/logp_head_size.ckpt``;
-* PyComex (``pip install "defog-adapt[recipes]"``) for the PyComex recipes.
+* PyComex (``pip install pycomex``) for the PyComex recipes.
 
 A smoke run says the pipeline EXECUTES and its checks pass. It does not say the models are any good:
 the molecules a two-epoch, five-step run produces are mostly invalid.
@@ -41,7 +41,7 @@ def have(*relative):
 needs_data = pytest.mark.skipif(
     not DATA or not ((Path(DATA) / "zinc250k").is_dir()), reason="set DEFOG_ADAPT_HOME to the reference data")
 needs_pycomex = pytest.mark.skipif(importlib.util.find_spec("pycomex") is None,
-                                   reason='pip install "defog-adapt[recipes]"')
+                                   reason="pip install pycomex")
 needs_examples = pytest.mark.skipif(not EXAMPLES.is_dir(), reason="examples/ is not in an installed wheel")
 
 
@@ -75,6 +75,70 @@ def test_the_e1_recipe_trains_and_evaluates(workdir, dataset):
     # The recipe's own last words, not PyComex's banner (which differs between PyComex versions).
     assert "validity (relaxed, largest fragment)" in out
     assert "Done. FCD and the other benchmark metrics are not computed here." in out
+
+
+@needs_examples
+@needs_data
+@needs_pycomex
+def test_the_e1_recipe_trains_a_conditional_model_and_keeps_the_statistics_it_needs(workdir):
+    """``--CONDITION`` is the same recipe plus a condition. What it must leave behind: a model that really has
+    a condition encoder, and the mean and std that standardised the labels, because the model stores neither
+    and cannot be sampled without them."""
+    import json
+
+    from defog_adapt.core import DeFoGModel
+
+    out = run(workdir, "training__e1.py", "--DATASET", "'zinc'", "--CONDITION", "'logp'", "--__TESTING__", "True")
+    assert "ZINC CONDITIONAL ON logp" in out and "Done. FCD and the other benchmark metrics are not computed here." in out
+
+    files = sorted((workdir / "results" / "training__e1").glob("*/condition.json"))
+    assert len(files) == 1, files                      # the unconditional run, in the same directory, wrote none
+    stats = json.loads(files[0].read_text(encoding="utf-8"))
+    assert stats["property"] == "logp" and stats["property_from"] == "decoded" and stats["std"] > 0
+    model = DeFoGModel.load(str(files[0].parent / "model"))
+    assert model.cond_dim == 1 and model.cond_drop_prob == pytest.approx(stats["cond_drop_prob"])
+    assert hasattr(model, "cond_encoder")
+
+
+@needs_examples
+@needs_data
+@needs_pycomex
+def test_the_e1_recipe_accumulates_micro_batches_without_changing_the_number_of_optimizer_steps(workdir):
+    """``--MICRO_BATCH_SIZE`` is a memory knob: the optimizer must still see the recipe's batch size, so it steps
+    as often as it would have with the whole batch on the GPU. Twice as many steps would mean the accumulation
+    was not wired; half as many, that the loader kept the full batch."""
+    import json
+    import math
+
+    run(workdir, "training__e1.py", "--DATASET", "'zinc'", "--MICRO_BATCH_SIZE", "8", "--__TESTING__", "True")
+    newest = max((workdir / "results" / "training__e1").glob("*/e1_report.json"), key=lambda p: p.stat().st_mtime)
+    provenance = json.loads(newest.read_text(encoding="utf-8"))["provenance"]
+    recipe = provenance["recipe"]
+    assert (recipe["batch_size"], recipe["micro_batch_size"], recipe["accumulate_grad_batches"]) == (16, 8, 2)
+    steps_per_epoch = math.ceil(provenance["encoding"]["n_train_graphs"] / recipe["batch_size"])
+    assert recipe["optimizer_steps"] == recipe["epochs_completed"] * steps_per_epoch
+
+
+@needs_examples
+@needs_pycomex
+def test_a_micro_batch_that_does_not_divide_the_batch_is_refused_before_anything_loads(workdir):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([sys.executable, "-W", "ignore", str(workdir / "training__e1.py"), "--MICRO_BATCH_SIZE", "5",
+                           "--__TESTING__", "True"], capture_output=True, text=True, timeout=600, env=env, cwd=workdir)
+    assert proc.returncode != 0 and "must divide" in (proc.stdout + proc.stderr)
+
+
+@needs_examples
+@needs_pycomex
+@pytest.mark.parametrize("args, message", [
+    (("--CONDITION", "'nonsense'"), "unknown property"),
+    (("--DATASET", "'moses'", "--CONDITION", "'logp'"), "ZINC only"),
+])
+def test_the_conditional_option_refuses_what_it_cannot_do_before_loading_anything(workdir, args, message):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([sys.executable, "-W", "ignore", str(workdir / "training__e1.py"), *args,
+                           "--__TESTING__", "True"], capture_output=True, text=True, timeout=600, env=env, cwd=workdir)
+    assert proc.returncode != 0 and message in (proc.stdout + proc.stderr)
 
 
 @needs_examples

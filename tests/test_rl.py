@@ -401,8 +401,8 @@ def _model_composed_logmarginal(base, adapter, X_t, E_t, t, node_mask, cond, w, 
 
 
 def _make_adapter(base):
-    from defog_adapt.core.adapter import AdaLNAdapter
-    a = AdaLNAdapter.for_base(base, cond_dim=2, time_conditioned=True)
+    from defog_adapt.core.adapter import CrossAttentionAdapter
+    a = CrossAttentionAdapter.for_base(base, cond_dim=2, time_conditioned=True)
     with torch.no_grad():                        # off the zero-init no-op so cond != uncond
         for p in a.parameters():
             p.add_(0.2 * torch.randn_like(p))

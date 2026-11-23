@@ -1,0 +1,198 @@
+{
+  "protocol": {
+    "n_per_target": 10,
+    "n_targets": 100,
+    "sampling": {
+      "eta": 25.0,
+      "omega": 0.0,
+      "sample_steps": 500,
+      "time_distortion": "polydec"
+    },
+    "split": "test"
+  },
+  "arms": {
+    "base": {
+      "label": "unconditional base",
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "mae_per_seed": [
+        1.2587502605210434,
+        1.286998340040243,
+        1.2349947542627895
+      ],
+      "mae_mean": 1.2602477849413587,
+      "mae_sd": 0.026034115463566647,
+      "validity_mean": 0.9963333333333333,
+      "uniqueness_mean": 1.0,
+      "guidance_weight": null,
+      "beta": null,
+      "size_model": false
+    },
+    "conditional": {
+      "label": "end-to-end conditional",
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "mae_per_seed": [
+        0.17645405650857737,
+        0.18750103830645182,
+        0.1790117694641053
+      ],
+      "mae_mean": 0.18098895475971152,
+      "mae_sd": 0.005782810560662812,
+      "validity_mean": 0.9906666666666667,
+      "uniqueness_mean": 1.0,
+      "guidance_weight": 1.0,
+      "beta": null,
+      "size_model": true
+    },
+    "film": {
+      "label": "FiLM adapter",
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "mae_per_seed": [
+        0.4337288008130086,
+        0.468834630192503,
+        0.43436276142132013
+      ],
+      "mae_mean": 0.4456420641422772,
+      "mae_sd": 0.020087852461345538,
+      "validity_mean": 0.9853333333333333,
+      "uniqueness_mean": 1.0,
+      "guidance_weight": 2.0,
+      "beta": null,
+      "size_model": true
+    },
+    "xattn": {
+      "label": "cross-attention adapter",
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "mae_per_seed": [
+        0.2780114343845374,
+        0.2740228803245438,
+        0.2642177879714579
+      ],
+      "mae_mean": 0.27208403422684635,
+      "mae_sd": 0.007098275388091302,
+      "validity_mean": 0.9833333333333333,
+      "uniqueness_mean": 1.0,
+      "guidance_weight": 2.0,
+      "beta": null,
+      "size_model": true
+    },
+    "xattn_fk": {
+      "label": "+ Feynman-Kac",
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "mae_per_seed": [
+        0.21623270351758808,
+        0.213611985815603,
+        0.21840859169199614
+      ],
+      "mae_mean": 0.21608442700839572,
+      "mae_sd": 0.0024017382092447097,
+      "validity_mean": 0.9896666666666666,
+      "uniqueness_mean": 0.7898333273934686,
+      "guidance_weight": 2.0,
+      "beta": 20.0,
+      "size_model": true
+    }
+  },
+  "paired": {
+    "conditional - base": {
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "per_seed": [
+        -1.082296204012466,
+        -1.0994973017337912,
+        -1.0559829847986841
+      ],
+      "mean": -1.079258830181647,
+      "sd": 0.02191559203907904
+    },
+    "film - conditional": {
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "per_seed": [
+        0.2572747443044312,
+        0.28133359188605117,
+        0.25535099195721483
+      ],
+      "mean": 0.2646531093825657,
+      "sd": 0.01447770970095643
+    },
+    "xattn - film": {
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "per_seed": [
+        -0.15571736642847117,
+        -0.19481174986795918,
+        -0.17014497344986224
+      ],
+      "mean": -0.17355802991543087,
+      "sd": 0.019769406160942176
+    },
+    "xattn_fk - xattn": {
+      "seeds": [
+        42,
+        43,
+        44
+      ],
+      "per_seed": [
+        -0.06177873086694932,
+        -0.0604108945089408,
+        -0.045809196279461756
+      ],
+      "mean": -0.055999607218450626,
+      "sd": 0.008851615694587657
+    }
+  },
+  "provenance": {
+    "evaluation_commit": "c44e6fc",
+    "trained_at_commits": {
+      "adapters_head_size_model": "c6b64a0",
+      "end_to_end_model": "7f961db"
+    },
+    "frozen_on_validation": {
+      "film_weight": 2.0,
+      "cross_attention_weight": 2.0,
+      "feynman_kac_weight": 2.0,
+      "feynman_kac_beta": 20.0,
+      "feynman_kac_particles": 10,
+      "end_to_end_weight": 1.0,
+      "end_to_end_checkpoint": "best validation loss, epoch 278 of 300"
+    },
+    "software": {
+      "python": "3.12.13",
+      "torch": "2.13.0 (CUDA 13.0)",
+      "torch_geometric": "2.8.1",
+      "pytorch_lightning": "2.6.6",
+      "rdkit": "2026.9.2",
+      "numpy": "2.5.5"
+    },
+    "hardware": "RTX 4090 (24 GB)"
+  }
+}

@@ -5,7 +5,7 @@ this page**: it says what the numbers do not support, and a number quoted withou
 result.
 
 Every figure below was measured in the research fork this package was extracted from, with its own
-harness, and has not been reproduced end to end here; the exception is the last section. No weights ship
+harness, and has not been reproduced end to end here; the exceptions are sections 8 and 9. No weights ship
 with 0.1, and `examples/` holds the recipes that produce them.
 
 ## Protocols
@@ -291,4 +291,150 @@ differences between them are paired.
 ```bash
 python examples/steer_zinc.py --base BASE --property logp --adapter ADAPTER --head HEAD \
     --size SIZE --evaluate 40 --n 10 --steps 500 --eta 25 --seed 42 --method fk --beta 20
+```
+
+
+## 9. The five approaches, trained and measured here
+
+Sections 1 to 7 are the research fork's numbers. This section is the second exception, beside section 8: every model in
+it was trained with the recipes in `examples/` and measured with `examples/compare_arms__zinc.py`, in this repository.
+It is the comparison behind the figure in the README, and the data behind that figure is
+[`assets/results_logp.json`](assets/results_logp.json).
+
+ZINC250k, logP, **held-out test split**, 100 targets × 10 generations, mean ± sd over three sampling seeds (each approach was trained once). Lower error is
+better.
+
+| approach | what it is | setting | logP error | validity | uniqueness |
+|---|---|---|---|---|---|
+| unconditional base | the adapter base checkpoint as it is: nothing steers it | - | **1.2602** ± 0.0260 | 0.996 | 1.000 |
+| end-to-end conditional | the E1 recipe trained end to end on logP, 300 epochs | guidance 1.0 | **0.1810** ± 0.0058 | 0.991 | 1.000 |
+| FiLM adapter | frozen base + adapter with FiLM only, 80 epochs | guidance 2.0 | **0.4456** ± 0.0201 | 0.985 | 1.000 |
+| cross-attention adapter | frozen base + adapter with node-to-condition cross-attention and Fourier bands, 80 epochs | guidance 2.0 | **0.2721** ± 0.0071 | 0.983 | 1.000 |
+| + Feynman-Kac | the cross-attention adapter, with Feynman-Kac particle steering on top | guidance 2.0, beta 20, 10 particles | **0.2161** ± 0.0024 | 0.990 | 0.790 |
+
+The unconditional base is the checkpoint described in
+[caveats.md](caveats.md#the-adapter-base-is-a-re-packaged-checkpoint), and it is the same frozen model under all three
+adapter rows.
+
+**Reading it.**
+
+* The model trained end to end on logP has the lowest error here, below every other approach on every sampling seed.
+  Its lead over the adapter alone, 0.0911 ± 0.0091 (paired per seed), is larger than the 0.058 recorded between two
+  trainings of one adapter recipe (section 3). Its lead over the adapter with Feynman-Kac, 0.0351 ± 0.0078, is smaller,
+  so this comparison does not order those two (see *What these numbers do and do not show*).
+* Measured from the unconditional base to the end-to-end model, the cross-attention adapter closes about 92% of the
+  distance and Feynman-Kac about 97%; the FiLM adapter, at the same training budget, about 75%.
+* The cross-attention adapter beats the FiLM adapter by 0.1736 ± 0.0198 (on all three seeds), and Feynman-Kac improves
+  the same adapter by 0.0560 ± 0.0089 (on all three seeds).
+* Validity is 0.983 to 0.991 for every conditional approach (0.996 for the base). Uniqueness is 1.000 everywhere except
+  under Feynman-Kac, where it is 0.790: about one valid generation in five repeats another.
+* What each cost, as wall-clock on one shared 24 GB GPU: the end-to-end model 36 h 23 min, the cross-attention adapter
+  13 h 41 min, the FiLM adapter 12 h 04 min, and the property head with the size model 53 min. The base the adapters
+  share was trained once, earlier, and is not counted.
+
+### Protocol
+
+* **Targets.** 100 per seed, drawn from the real molecules of the held-out test split (their *decoded* logP). Seeds 42,
+  43 and 44 each draw their own 100, and all five approaches see the same ones within a seed, so the differences between
+  approaches are paired.
+* **Error.** As in the other conditional sections: the pooled mean absolute difference between each valid generation's
+  decoded logP and its target, over 10 generations per target (Feynman-Kac: 10 particles). Validity is the fraction of
+  generations that decode to a valid molecule; uniqueness is the fraction of the valid ones that are distinct, pooled over
+  all generations.
+* **Sampling.** 500 steps, eta 25, omega 0, polydec time distortion; Feynman-Kac with `beta` 20 and the `FK_STEERING`
+  schedule, scored by a learned property head.
+* **Node counts.** The four conditional approaches draw them from the learned `P(n | logP)`; the unconditional base cannot,
+  and draws from the dataset's marginal.
+* **Settings were chosen on validation, once, before any test number was read.** The rule was written down in advance:
+  per approach, sweep the guidance weight on the validation split (seed 42, 100 targets × 10 generations), take the lowest
+  error among the weights whose validity is at least 0.97, and where another candidate is within the 0.011 run-to-run noise
+  floor of the best, prefer the recipe's own checkpoint and then the lower weight. Feynman-Kac uses the cross-attention
+  adapter's weight. For the end-to-end model two checkpoints were candidates: the one with the lowest validation loss (the
+  recipe's own choice, epoch 278) and the final epoch (300). They tied within the noise floor and the recipe's own won.
+  The test split was then read once.
+
+| approach | checkpoint | guidance weight | logP error | validity | outcome |
+|---|---|---|---|---|---|
+| trained end to end | lowest validation loss (epoch 278) | 1.0 | 0.1869 | 0.992 | **chosen** |
+| trained end to end | lowest validation loss (epoch 278) | 1.5 | 0.1897 | 0.948 | excluded: validity below 0.97 |
+| trained end to end | lowest validation loss (epoch 278) | 2.0 | 0.6892 | 0.331 | excluded: validity below 0.97 |
+| trained end to end | final epoch (300) | 1.0 | 0.1900 | 0.992 |  |
+| trained end to end | final epoch (300) | 1.5 | 0.1928 | 0.933 | excluded: validity below 0.97 |
+| trained end to end | final epoch (300) | 2.0 | 0.7260 | 0.305 | excluded: validity below 0.97 |
+| FiLM adapter | - | 1.0 | 0.5550 | 0.997 |  |
+| FiLM adapter | - | 1.5 | 0.4724 | 0.991 |  |
+| FiLM adapter | - | 2.0 | 0.4410 | 0.983 | **chosen** |
+| FiLM adapter | - | 2.5 | 0.4592 | 0.962 | excluded: validity below 0.97 |
+| cross-attention adapter | - | 1.0 | 0.3603 | 0.991 |  |
+| cross-attention adapter | - | 1.5 | 0.3057 | 0.992 |  |
+| cross-attention adapter | - | 2.0 | 0.2762 | 0.987 | **chosen** |
+| cross-attention adapter | - | 2.5 | 0.2711 | 0.961 | excluded: validity below 0.97 |
+| unconditional base | - | - | 1.3688 | 0.998 | reference |
+| + Feynman-Kac (beta 20) | - | 2.0 | 0.2095 | 0.995 | reference, at the cross-attention weight |
+
+Weight 2.5 would have had the lowest raw error for the cross-attention adapter (0.2711), but its validity (0.961) fails the
+rule, and the difference from 2.0 is inside the noise floor in any case.
+
+### How each approach was made
+
+* **Unconditional base.** The adapter base checkpoint: the E1 recipe followed by two rounds of structural RL, sampled with
+  nothing steering it. It is the do-nothing reference.
+* **End to end.** `training__e1.py --CONDITION "'logp'"`: the E1 recipe with every setting unchanged and a logP condition
+  added (decoded-graph labels, standardised by the training graphs' mean 2.8251 and standard deviation 1.1581, with the
+  condition dropped on 10% of training steps). 300 epochs. The recorded batch of 256 does not fit a 24 GB GPU (its first
+  step needs more than 23 GB), so it is accumulated from two micro-batches of 128 (`MICRO_BATCH_SIZE`), with the EMA decay
+  adjusted to stay at 0.9999 per optimizer step. The run was chained over two jobs, and the checkpoint with the lowest
+  validation loss is the one measured. **No structural-RL clean-up followed**, unlike the base.
+* **FiLM adapter.** `adapter_training__zinc.py --XATTN_TOKENS 0 --COND_FOURIER 0`: the FiLM-only architecture, 2.75 M
+  parameters, trained as long as the cross-attention adapter (80 epochs, batch 24, learning rate 4e-4).
+* **Cross-attention adapter.** The same recipe with its defaults: node-to-condition cross-attention and three Fourier bands,
+  6.64 M parameters. **+ Feynman-Kac** adds the particle steering on top of this adapter.
+* **Property head and size model.** `fit_property_head__zinc.py` with its defaults, on the decoded-label convention of the
+  adapters: the head's held-out error is 0.0467 (correlation 0.998, 0.040 of the property's standard deviation) and the
+  size model gains 0.0927 nats over the marginal (shrink 0.912).
+* Every model was trained once, with seed 42.
+
+### What these numbers do and do not show
+
+* **The sd is over sampling seeds, not over trainings.** Each approach was trained once, so the standard deviations say how
+  much the *measurement* moves with the target set and the sampling noise, not how much the *model* would move. Section 3
+  recorded 0.058 between two trainings of one adapter recipe. A gap between two different trained models of about that size
+  or less, such as Feynman-Kac against the end-to-end model (0.035), is not an ordering this section can establish; larger
+  gaps (the adapters against the base, FiLM against cross-attention, the end-to-end model against the adapter alone) exceed
+  it, though each still comes from one training. Feynman-Kac against the adapter it steers is a paired difference within one
+  trained model and does not carry that noise.
+* **The lineages differ.** The base, and so every adapter, had two structural-RL clean-up rounds after its E1 training; the
+  end-to-end model had none. Its validity (0.991) is nonetheless as high as the adapters', but the comparison is not
+  like for like in how the models were made.
+* **The end-to-end model was not guided.** The library's guidance for such a model blends rate matrices, which breaks above
+  weight 1 (on validation, weight 2.0 gave an error of 0.6892 and a validity of 0.331), so it was measured at weight 1.0. The
+  adapters use probability-space blending and are measured at 2.0. A guided end-to-end model is not measured here, and could
+  score lower.
+* **The FiLM adapter here is an equal-budget baseline.** It was trained as long as the cross-attention adapter (80
+  epochs), not for the 20 of section 3, so the gap between them here is the architecture alone; the step in section 3 also
+  contains the difference in training length.
+* **One hardware and software setup**, one frozen base and one property. GPU sampling is not bit-reproducible, so a re-run
+  agrees within the noise, not exactly.
+
+### Provenance and reproducing it
+
+Trained and measured on 24 GB consumer GPUs (RTX 4090), under Python 3.12, PyTorch 2.13.0 (CUDA 13.0), PyTorch Geometric
+2.8.1, PyTorch Lightning 2.6.6, RDKit 2026.9.2 and numpy 2.5.5. The adapters, the head and the size model were trained at
+commit `c6b64a0`, the end-to-end model at `7f961db`, and every measurement was made at `c44e6fc`. Between them the code
+changed by the `MICRO_BATCH_SIZE` option and by renaming `AdaLNAdapter` to `CrossAttentionAdapter`, which is the same
+class (the parity gate matches the research outputs bit for bit after the rename).
+
+```bash
+# the unconditional base is the adapter base checkpoint (see caveats.md); everything else is trained once
+python examples/training__e1.py --DATASET "'zinc'" --CONDITION "'logp'" --MICRO_BATCH_SIZE 128 \
+    --CKPT_DIR "'runs/e2e'" --MAX_TIME_HOURS 23 --SKIP_FINAL_EVAL True
+python examples/adapter_training__zinc.py --BASE_CKPT "'BASE'" --XATTN_TOKENS 0 --COND_FOURIER 0   # the FiLM adapter
+python examples/adapter_training__zinc.py --BASE_CKPT "'BASE'"                                    # the cross-attention adapter
+python examples/fit_property_head__zinc.py --base BASE --property logp --out HEADS/logp_head --with-size-model
+# choose the guidance weights on --split validation, then read the test split once:
+python examples/compare_arms__zinc.py run --split test --seeds 42 43 44 --out RESULTS \
+    --base BASE --conditional runs/e2e/best_model.ckpt --conditional-weight 1.0 \
+    --film FILM.ckpt --film-weight 2.0 --xattn XATTN.ckpt --xattn-weight 2.0 \
+    --head HEADS/logp_head.ckpt --size HEADS/logp_head_size.ckpt
+python examples/compare_arms__zinc.py summarize RESULTS
 ```

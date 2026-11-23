@@ -13,7 +13,7 @@ import torch
 from torch_geometric.loader import DataLoader
 
 from defog_adapt.domains.molecule import build_encoders, smiles_to_pyg_data
-from defog_adapt.core import (DeFoGModel, AdaLNAdapter, AdapterComposition, ConditionBranch,
+from defog_adapt.core import (DeFoGModel, CrossAttentionAdapter, AdapterComposition, ConditionBranch,
                               AdaptedSampler, Sampler, FeynmanKacSampler,
                               FingerprintEncoder, NodeConditionCrossAttention)
 from defog_adapt.core.data import to_dense
@@ -57,7 +57,7 @@ def test_null_equals_base():
     """A fresh (gate zero-init) adapter modulation must be an EXACT no-op."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    adapter = AdaLNAdapter.for_base(model, cond_dim=2, hidden=32, time_conditioned=True).eval()
+    adapter = CrossAttentionAdapter.for_base(model, cond_dim=2, hidden=32, time_conditioned=True).eval()
     pred_base = model.forward(noisy, extra, mask)
     c = torch.randn(bs, 2)
     mod = adapter(c, t=noisy["t"])
@@ -73,7 +73,7 @@ def test_modulation_actually_moves_after_perturb():
     the wiring is live, not silently ignored)."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    adapter = AdaLNAdapter.for_base(model, cond_dim=2, hidden=32).eval()
+    adapter = CrossAttentionAdapter.for_base(model, cond_dim=2, hidden=32).eval()
     with torch.no_grad():
         for g in adapter.gate:
             for s in g:
@@ -91,8 +91,8 @@ def test_batched_composition_bypass():
     prediction must equal the base's unconditional prediction."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a1 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a2 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a1 = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a2 = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
     comp = AdapterComposition(
         [ConditionBranch(a1, torch.zeros(bs, 1), 1.0), ConditionBranch(a2, torch.ones(bs, 1), 1.0)],
         base=model, mode="mean")
@@ -131,8 +131,8 @@ def test_empty_composition_fallthrough():
 def test_adapted_sampler_runs_and_steers_shapewise():
     """A 2-branch composition samples without error and returns valid graphs."""
     model, loader = build_tiny_model()
-    a1 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a2 = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a1 = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a2 = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
     comp = AdapterComposition(
         [ConditionBranch(a1, torch.tensor([0.5]), 2.0), ConditionBranch(a2, torch.tensor([-0.5]), 2.0)],
         base=model, mode="mean")
@@ -144,7 +144,7 @@ def test_adapted_sampler_runs_and_steers_shapewise():
 
 def test_save_load_roundtrip():
     model, loader = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=3, hidden=32,
+    a = CrossAttentionAdapter.for_base(model, cond_dim=3, hidden=32,
                               cond_mean=[0.1, 0.2, 0.3], cond_std=[1.0, 2.0, 0.5], name="tst").eval()
     with torch.no_grad():
         for g in a.gate:
@@ -154,7 +154,7 @@ def test_save_load_roundtrip():
     m0 = a(c, t=t).layers[0]["gateX"]
     with tempfile.TemporaryDirectory() as d:
         p = a.save(os.path.join(d, "ad"))
-        b = AdaLNAdapter.load(p)
+        b = CrossAttentionAdapter.load(p)
     m1 = b(c, t=t).layers[0]["gateX"]
     assert torch.allclose(m0, m1, atol=1e-6), "save/load changed modulation"
     assert b.name == "tst" and torch.allclose(b.cond_std, torch.tensor([1.0, 2.0, 0.5]))
@@ -168,8 +168,8 @@ def test_stack_groups_heterogeneous():
     from defog_adapt.core.adapter import Modulation
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a_all = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a_x = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
+    a_all = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a_x = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
     for order in ([a_x, a_all], [a_all, a_x]):
         mods = [ad(torch.zeros(bs, 1), t=noisy["t"]) for ad in order]
         stk = Modulation.stack_groups(mods, bs, "cpu")
@@ -189,8 +189,8 @@ def test_heterogeneous_streams_compose_and_bypass():
     from defog_adapt.core.data import PlaceHolder
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a_all = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
-    a_x = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
+    a_all = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a_x = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, streams=("X",)).eval()
     comp = AdapterComposition(
         [ConditionBranch(a_x, torch.zeros(bs, 1), 1.0), ConditionBranch(a_all, torch.ones(bs, 1), 1.0)],
         base=model, mode="mean")
@@ -212,7 +212,7 @@ def test_fk_over_adapter_runs():
     """FeynmanKacSampler with an AdapterComposition as the proposal (FK refinement over
     adapter conditioning): the composition is wired in, and sampling returns valid graphs."""
     model, loader = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
     comp = AdapterComposition([ConditionBranch(a, torch.tensor([0.5]), 1.0)], base=model, mode="product")
     energy = lambda X1, E1, node_mask: E1[..., 1:].sum(dim=(1, 2, 3)).float()  # toy per-graph energy
     fk = FeynmanKacSampler(model, energy, beta=1.0, warmup_frac=0.4, sample_steps=6,
@@ -253,7 +253,7 @@ def test_cond_encoder_registry_dispatch():
     spectrum encoder (a kind-less legacy config, or kind='spectrum_cnn') is not part of this
     package, so it must say so rather than build something else."""
     model, _ = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
+    a = CrossAttentionAdapter.for_base(model, cond_dim=64, hidden=32,
                               cond_encoder=dict(kind="mlp", in_dim=64, out_dim=16, hidden=32,
                                                 n_blocks=1))
     assert isinstance(a.cond_encoder, FingerprintEncoder)
@@ -261,7 +261,7 @@ def test_cond_encoder_registry_dispatch():
     for spec, label in ((dict(n_bins=4, out_dim=16), "kind-less legacy"),
                         (dict(kind="spectrum_cnn", n_bins=4, out_dim=16), "spectrum_cnn")):
         try:
-            AdaLNAdapter.for_base(model, cond_dim=8, hidden=32, cond_encoder=spec)
+            CrossAttentionAdapter.for_base(model, cond_dim=8, hidden=32, cond_encoder=spec)
         except ValueError as exc:
             # The generic "unknown kind" message would also contain the word "spectrum";
             # what the caller needs is to be told this one is deliberately not supported.
@@ -271,7 +271,7 @@ def test_cond_encoder_registry_dispatch():
             raise AssertionError(f"{label} spectrum encoder config must raise")
 
     try:
-        AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
+        CrossAttentionAdapter.for_base(model, cond_dim=64, hidden=32,
                               cond_encoder=dict(kind="no_such_encoder", in_dim=64))
     except ValueError as exc:
         assert "no_such_encoder" in str(exc)
@@ -286,7 +286,7 @@ def test_encoder_adapter_null_equals_base_and_roundtrips():
     rebuilding the encoder from the serialized config rather than dropping it."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
+    a = CrossAttentionAdapter.for_base(model, cond_dim=64, hidden=32,
                               cond_encoder=dict(kind="mlp", in_dim=64, out_dim=16,
                                                 hidden=32, n_blocks=1)).eval()
     pred_base = model.forward(noisy, extra, mask)
@@ -302,7 +302,7 @@ def test_encoder_adapter_null_equals_base_and_roundtrips():
                 g[s].weight.add_(torch.randn_like(g[s].weight) * 0.05)
     m0 = a(c, t=noisy["t"]).layers[0]["gateX"]
     with tempfile.TemporaryDirectory() as d:
-        b = AdaLNAdapter.load(a.save(os.path.join(d, "ad")))
+        b = CrossAttentionAdapter.load(a.save(os.path.join(d, "ad")))
     b.eval()
     assert isinstance(b.cond_encoder, FingerprintEncoder), "encoder lost on load"
     m1 = b(c, t=noisy["t"]).layers[0]["gateX"]
@@ -319,7 +319,7 @@ def test_zero_gate_is_noop_in_prob_space_at_any_weight():
     from defog_adapt.core.data import PlaceHolder
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
     comp = AdapterComposition([ConditionBranch(a, torch.full((bs, 1), 0.7), 1.0)],
                               base=model, mode="product")
     rep = len(comp) + 1
@@ -348,7 +348,7 @@ def test_legacy_config_with_the_removed_flags_off_loads_silently():
     .ckpt path -- without the 'ignoring unknown config keys' warning, and behave identically."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, name="old").eval(), seed=1)
+    a = _wake_gates(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, name="old").eval(), seed=1)
     cfg = a.config()
     assert "interior_ff" not in cfg and "interior_attn" not in cfg, "config still emits removed keys"
     cfg.update(interior_ff=False, interior_attn=False)       # what the research package wrote
@@ -356,11 +356,11 @@ def test_legacy_config_with_the_removed_flags_off_loads_silently():
     want = a(c, t=noisy["t"]).layers[0]["gateX"]
     with warnings.catch_warnings():
         warnings.simplefilter("error")                       # an unknown-key warning would fail
-        b = AdaLNAdapter.from_config(cfg, a.state_dict()).eval()
+        b = CrossAttentionAdapter.from_config(cfg, a.state_dict()).eval()
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "old.ckpt")
             torch.save({"state_dict": a.state_dict(), "config": cfg}, path)
-            c2 = AdaLNAdapter.load(path).eval()
+            c2 = CrossAttentionAdapter.load(path).eval()
     for tag, m in (("from_config", b), ("load", c2)):
         got = m(c, t=noisy["t"]).layers[0]["gateX"]
         assert torch.allclose(want, got, atol=1e-6), f"{tag} changed the modulation"
@@ -372,12 +372,12 @@ def test_legacy_config_with_a_removed_flag_on_raises():
     have. Ignoring the key would load a different model without a word, so it must raise, and
     name the key."""
     model, _ = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval()
+    a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval()
     for flag in ("interior_ff", "interior_attn"):
         cfg = a.config()
         cfg[flag] = True
         try:
-            AdaLNAdapter.from_config(cfg, a.state_dict())
+            CrossAttentionAdapter.from_config(cfg, a.state_dict())
         except ValueError as exc:
             assert flag in str(exc), f"message does not name {flag}: {exc!r}"
         else:
@@ -386,7 +386,7 @@ def test_legacy_config_with_a_removed_flag_on_raises():
             path = os.path.join(d, "int.ckpt")
             torch.save({"state_dict": a.state_dict(), "config": cfg}, path)
             try:
-                AdaLNAdapter.load(path)
+                CrossAttentionAdapter.load(path)
             except ValueError as exc:
                 assert flag in str(exc)
             else:
@@ -442,7 +442,7 @@ def test_fourier_and_xattn_are_exact_noops_at_init():
     for kw, label in [(dict(cond_fourier=6), "fourier"),
                       (dict(xattn_tokens=8, xattn_dim=32, xattn_heads=4), "xattn"),
                       (dict(cond_fourier=6, xattn_tokens=8, xattn_dim=32, xattn_heads=4), "both")]:
-        a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, **kw).eval()
+        a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, **kw).eval()
         mod = a(torch.full((bs, 1), 0.7), t=noisy["t"])
         pred = model.forward(noisy, extra, mask, cond_modulation=mod)
         d = (pred.X - base_pred.X).abs().max().item()
@@ -455,8 +455,8 @@ def test_fourier_widens_the_condition_path_and_keeps_the_raw_scalar():
     """cond_in must grow by exactly 2*cond_dim*n_bands, and the raw normalised scalar
     must still be there -- turning the feature on cannot REMOVE information."""
     model, _ = build_tiny_model()
-    plain = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=0)
-    ff = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=6)
+    plain = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=0)
+    ff = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=6)
     w0 = plain.trunk[0].in_features
     w1 = ff.trunk[0].in_features
     assert w1 - w0 == 2 * 1 * 6, f"cond_in grew by {w1-w0}, want {2*6}"
@@ -488,7 +488,7 @@ def test_fourier_resolves_nearby_targets_better_than_a_raw_scalar():
     ratios = {}
     for n_bands, label in [(0, "raw"), (3, "fourier")]:
         torch.manual_seed(7)
-        a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=n_bands,
+        a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=n_bands,
                                   cond_mean=[2.8], cond_std=[1.16]).eval()
         far = torch.tensor([[6.0]])
         def trunk_of(c):
@@ -512,7 +512,7 @@ def test_fourier_bandwidth_keeps_neighbours_correlated():
     on a random trunk init. Fails if the default bandwidth is raised into aliasing."""
     model, _ = build_tiny_model()
     def cos_at(n, v0, v1):
-        a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=n,
+        a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, cond_fourier=n,
                                   cond_mean=[2.8], cond_std=[1.158])
         f = lambda v: a._fourier(a.normalize(torch.tensor([[v]])))[0]
         return torch.nn.functional.cosine_similarity(f(v0), f(v1), dim=0).item()
@@ -534,7 +534,7 @@ def test_fourier_refuses_encoder_and_high_dimensional_conditions():
                           cond_encoder={"kind": "mlp", "in_dim": 512, "out_dim": 64}), "encoder"),
                     (dict(cond_dim=32, cond_fourier=4), "high-dim")]:
         try:
-            AdaLNAdapter.for_base(model, hidden=32, **kw)
+            CrossAttentionAdapter.for_base(model, hidden=32, **kw)
             raise AssertionError(f"{why}: cond_fourier was accepted")
         except ValueError:
             pass
@@ -572,7 +572,7 @@ def test_xattn_is_nonlinear_in_node_content_unlike_film():
     that failure is precisely what 'content-addressed rather than broadcast' means."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
+    a = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
                                           xattn_dim=32, xattn_heads=4).eval(),
                     seed=21, sharpen=6.0)
     mod = a(torch.full((bs, 1), 0.7), t=noisy["t"])
@@ -599,7 +599,7 @@ def test_xattn_is_nonlinear_in_node_content_unlike_film():
     # xattn_tokens=0 EXPLICITLY: for_base defaults to cross-attention now, and a control
     # that quietly acquired the mechanism it is the control for would make the contrast
     # vacuous. The assert below caught exactly that when the default flipped.
-    film_only = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32,
+    film_only = _wake_gates(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32,
                                                   xattn_tokens=0).eval(), seed=23)
     fmod = film_only(torch.full((bs, 1), 0.7), t=noisy["t"])
     assert fmod.xattn is None, "the FiLM-only control picked up a cross-attention path"
@@ -622,7 +622,7 @@ def test_xattn_starts_as_a_near_broadcast_at_init():
     against ln(n_tokens) is the diagnostic that does."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
+    a = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
                                           xattn_dim=32, xattn_heads=4).eval(), seed=22)
     # Tokens from the REAL trunk, as the eval preflight builds them. Random tokens are
     # ~4x larger, which makes the attention look ~10x sharper than it is at init and put
@@ -659,7 +659,7 @@ def test_film_delta_is_masked_on_padded_nodes_and_edges():
     states feed the next step's RRWP features."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_gates(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=31)
+    a = _wake_gates(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32).eval(), seed=31)
     mod = a(torch.full((bs, 1), 0.7), t=noisy["t"])
     n = mask.size(1)
     x_mask = mask.unsqueeze(-1)
@@ -687,7 +687,7 @@ def test_xattn_masks_padded_nodes():
     the next step's RRWP features."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
+    a = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
                                           xattn_dim=32, xattn_heads=4).eval(), seed=11)
     mod = a(torch.full((bs, 1), 0.7), t=noisy["t"])
     n = mask.size(1)
@@ -721,7 +721,7 @@ def test_xattn_only_touches_its_own_group_in_a_stacked_forward():
     from defog_adapt.core.data import PlaceHolder
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
+    a = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
                                           xattn_dim=32, xattn_heads=4).eval(), seed=12)
     comp = AdapterComposition([ConditionBranch(a, torch.tensor([0.7]), 2.0)], base=model)
     rep = len(comp) + 1
@@ -753,9 +753,9 @@ def test_two_xattn_adapters_stack_without_crosstalk():
     from defog_adapt.core.data import PlaceHolder
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a1 = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
+    a1 = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=8,
                                            xattn_dim=32, xattn_heads=4).eval(), seed=41)
-    a2 = _wake_xattn(AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=4,
+    a2 = _wake_xattn(CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=4,
                                            xattn_dim=32, xattn_heads=4).eval(), seed=42)
     c1, c2 = torch.tensor([0.7]), torch.tensor([-1.3])
 
@@ -797,14 +797,14 @@ def test_fourier_xattn_save_load_roundtrip():
     and state_dict loading fails (or worse, silently rebuilds without them)."""
     model, loader = build_tiny_model()
     noisy, extra, mask, bs = a_noisy(model, loader)
-    a = _wake_xattn(AdaLNAdapter.for_base(
+    a = _wake_xattn(CrossAttentionAdapter.for_base(
         model, cond_dim=1, hidden=32, cond_fourier=6, xattn_tokens=8, xattn_dim=32,
         xattn_heads=4, cond_mean=[2.8], cond_std=[1.16], name="rt").eval(), seed=14)
     c = torch.full((bs, 1), 3.1)
     before = a(c, t=noisy["t"])
     with tempfile.TemporaryDirectory() as d:
         path = a.save(os.path.join(d, "rt"))
-        b = AdaLNAdapter.load(path)
+        b = CrossAttentionAdapter.load(path)
         cfg = b._config()
         for k, v in [("cond_fourier", 6), ("xattn_tokens", 8), ("xattn_dim", 32), ("xattn_heads", 4)]:
             assert cfg[k] == v, f"config lost {k}: {cfg[k]} != {v}"
@@ -819,7 +819,7 @@ def test_fourier_xattn_save_load_roundtrip():
         d1 = after.xattn[0][0][1](X, xm)
         assert torch.allclose(d0, d1, atol=1e-6), "cross-attention delta changed across save/load"
         # from_config is the safetensors path and must accept the new keys too
-        AdaLNAdapter.from_config(cfg, b.state_dict())
+        CrossAttentionAdapter.from_config(cfg, b.state_dict())
     return "cond_fourier/xattn_* survive save/load and from_config; deltas reproduce"
 
 
@@ -831,7 +831,7 @@ def test_fourier_xattn_save_load_roundtrip():
 def test_for_base_defaults_to_cross_attention_and_fourier():
     """for_base is where the current default architecture lives."""
     model, _ = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32)
+    a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32)
     assert a.xattn_tokens == 64, a.xattn_tokens
     assert a.xattn_dim == 128 and a.xattn_heads == 16
     assert a.cond_fourier == 3, a.cond_fourier
@@ -847,7 +847,7 @@ def test_for_base_still_builds_the_legacy_film_adapter_on_request():
     """Every result before 2026-08-28 was measured on the FiLM-only adapter; it has to
     stay one explicit call away, or those numbers stop being reproducible."""
     model, _ = build_tiny_model()
-    a = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=0, cond_fourier=0)
+    a = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32, xattn_tokens=0, cond_fourier=0)
     assert a.xattn_tokens == 0 and a.cond_fourier == 0
     assert not hasattr(a, "xattn") or len(getattr(a, "xattn", [])) == 0
     return "legacy FiLM-only adapter still reachable"
@@ -858,12 +858,12 @@ def test_for_base_skips_fourier_where_the_condition_forbids_it():
     spectrum adapter, since __init__ refuses bands next to an encoder or a wide
     condition. The default has to be 'on where legal', and this is the test that says so."""
     model, _ = build_tiny_model()
-    wide = AdaLNAdapter.for_base(model, cond_dim=64, hidden=32,
+    wide = CrossAttentionAdapter.for_base(model, cond_dim=64, hidden=32,
                                  cond_encoder={"kind": "mlp", "in_dim": 64, "out_dim": 16,
                                                "hidden": 32, "n_blocks": 1})
     assert wide.cond_fourier == 0, wide.cond_fourier
     assert wide.xattn_tokens == 64, "cross-attention is independent of the condition width"
-    no_enc = AdaLNAdapter.for_base(model, cond_dim=16, hidden=32)   # > 8 dims, no encoder
+    no_enc = CrossAttentionAdapter.for_base(model, cond_dim=16, hidden=32)   # > 8 dims, no encoder
     assert no_enc.cond_fourier == 0, no_enc.cond_fourier
     return "fourier auto-disabled for encoder and wide conditions; xattn unaffected"
 
@@ -877,18 +877,18 @@ def test_init_stays_conservative_so_old_checkpoints_rebuild_unchanged():
     path its state_dict does not contain -- and an encoder adapter raises on the Fourier
     guard instead of loading."""
     model, _ = build_tiny_model()
-    legacy = AdaLNAdapter.for_base(model, cond_dim=1, hidden=32,
+    legacy = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=32,
                                    xattn_tokens=0, cond_fourier=0).eval()
     cfg = legacy._config()
     # simulate a config written before either mechanism existed
     for k in ("xattn_tokens", "xattn_dim", "xattn_heads", "cond_fourier"):
         cfg.pop(k, None)
-    rebuilt = AdaLNAdapter.from_config(cfg, legacy.state_dict())
+    rebuilt = CrossAttentionAdapter.from_config(cfg, legacy.state_dict())
     assert rebuilt.xattn_tokens == 0, rebuilt.xattn_tokens
     assert rebuilt.cond_fourier == 0, rebuilt.cond_fourier
     with tempfile.TemporaryDirectory() as d:
         path = legacy.save(os.path.join(d, "legacy"))
-        back = AdaLNAdapter.load(path)
+        back = CrossAttentionAdapter.load(path)
     c = torch.tensor([[0.7]])
     m_a, m_b = legacy(c, torch.tensor([[0.3]])), back(c, torch.tensor([[0.3]]))
     dev = max(float((m_a.layers[i][k] - m_b.layers[i][k]).abs().max())

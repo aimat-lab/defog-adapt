@@ -8,7 +8,7 @@ Import name `defog_adapt`. Code only: no model weights ship.
 
 ### Included
 
-- **Frozen-base adapters**: `AdaLNAdapter` (gated FiLM, node-to-condition cross-attention, Fourier bands on
+- **Frozen-base adapters**: `CrossAttentionAdapter` (gated FiLM, node-to-condition cross-attention, Fourier bands on
   the condition, an encoder for high-dimensional conditions), `AdapterModule`, `AdapterComposition`
   (product or mean of probability-space marginals), `AdaptedSampler`.
 - **Learned node counts**: `LearnedSizeDistribution`, `ComposedSizeDistribution`, `fit_size_model`.
@@ -21,13 +21,27 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - **Molecules**: encode and decode, validity and distribution metrics, `morgan_condition`, kekulized
   representations, and reference-split loaders for ZINC250k, MOSES and ChEMBL.
 - `defog_adapt.presets`: the recorded recipes as plain data.
-- `examples/`: a CPU quickstart, PyComex recipes (E1 base training, structural RL, adapter training, adapter
-  RL), the property-head script and `steer_zinc.py`, the assembly.
+- `examples/`: a CPU quickstart, PyComex recipes (E1 base training, optionally end to end on a property and, with
+  `MICRO_BATCH_SIZE`, with the recorded batch accumulated on a 24 GB GPU; structural RL, adapter training, adapter RL), the property-head script, `steer_zinc.py` (the assembly) and `compare_arms__zinc.py` (the
+  comparison behind the README's results figure).
 - `docs/`: adapters, steering, RL, results, caveats, migration.
+- The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
+  model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
+  over three seeds (`docs/results.md` section 9; `docs/assets/results_logp.json` holds the data and
+  `docs/assets/results_logp.py` draws it, in a light and a dark variant).
+- `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
+  adapter, from the same noise), its recorded trajectory and the scripts that made it.
+- The README opens with installation, the results figure (`docs/assets/results_logp.py`) and a self-contained
+  quickstart that runs on a CPU after `pip install` (and is executed by `tests/test_readme_quickstart.py`), and
+  has a BibTeX block and badges. `CONTRIBUTING.md` and `SECURITY.md` are new.
+- One extra, `chem` (RDKit). pandas, psutil and nvidia-ml-py are core dependencies; the contributor tools are a
+  `dev` dependency group; PyComex, which the recipes need, is installed separately because it caps numpy below 2.
 
 ### Changed relative to the research fork
 
 - Import name `defog` to `defog_adapt`; experiment helpers now live in `defog_adapt.domains.molecule`.
+- `AdaLNAdapter` is now `CrossAttentionAdapter`, the name of the recorded architecture. The old name is an alias of
+  the same class, so fork code and every adapter checkpoint (which stores no class name) keep working.
 - Trainer defaults are the recorded recipes, and `AdapterGDPOTrainer(rollout_weight=...)` is **required**.
 - Only probability-space guidance blending remains (rate-space blending was numerically broken above weight 1).
 - `MoleculeDomain.encode` encodes an aromatic core in Kekule form when the vocabulary is kekulized.

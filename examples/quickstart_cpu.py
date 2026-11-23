@@ -5,7 +5,7 @@ so the generated molecules are poor and the steering is weak. What this checks i
 fit together, and it is the shortest honest tour of the API:
 
     1. a base DeFoG model             (DeFoGModel, trained unconditionally)
-    2. a frozen-base adapter          (AdaLNAdapter + AdapterModule, conditioned on logP)
+    2. a frozen-base adapter          (CrossAttentionAdapter + AdapterModule, conditioned on logP)
     3. a property head                (PropertyHead, a graph -> logP regressor: the FK "ruler")
     4. a learned size model           (fit_size_model, P(n | logP))
     5. conditional sampling           (AdaptedSampler over an AdapterComposition)
@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import label_graphs, mean_abs_error, properties_of, property_fn  # noqa: E402
 
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, AdaptedSampler, AdapterComposition, AdapterModule, ConditionBranch, DeFoGModel,
+    CrossAttentionAdapter, AdaptedSampler, AdapterComposition, AdapterModule, ConditionBranch, DeFoGModel,
     FeynmanKacSampler, LearnedPropertyEnergy, PropertyHead, StandardisedEnergy, fit_property_head,
     fit_size_model,
 )
@@ -101,7 +101,7 @@ def main() -> None:
     # ------------------------------------------------------------------ 2. a frozen-base adapter
     # Only the adapter trains; the base is frozen, so the unconditional model stays exactly as it
     # was and adapters for different properties can be swapped and composed.
-    adapter = AdaLNAdapter.for_base(
+    adapter = CrossAttentionAdapter.for_base(
         base, cond_dim=1, hidden=32, cond_fourier=3, xattn_tokens=8, xattn_dim=16, xattn_heads=2,
         cond_mean=[mean], cond_std=[std], name="logp_adapter", cond_type="logp")
     fit_trainer(4 if smoke else 120).fit(AdapterModule(base, adapter, lr=2e-3), loader)

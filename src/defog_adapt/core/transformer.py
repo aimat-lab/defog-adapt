@@ -193,7 +193,7 @@ class GraphTransformer(nn.Module):
         E = E * e_mask
 
         # Transformer layers. An optional gated-FiLM `modulation` (from a frozen-
-        # base AdaLNAdapter) tilts each layer's output; `None` -> byte-identical to
+        # base CrossAttentionAdapter) tilts each layer's output; `None` -> byte-identical to
         # the base (adapters are exact no-ops when absent or gate-zeroed).
         for i, layer in enumerate(self.tf_layers):
             X, E, y = layer(X, E, y, node_mask)

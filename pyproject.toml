@@ -31,7 +31,7 @@ classifiers = [
 ]
 
 # Import-time truth for ``import defog_adapt``. Every lower bound below was TESTED: the full suite
-# passes with all of them installed at exactly these versions (Python 3.10; extras included).
+# passes with all of them installed at exactly these versions (Python 3.10; the chem extra included).
 # Two of them are higher than they look because of what was found doing that:
 #   * pytorch_lightning>=2.4: 2.0-2.3 import ``pkg_resources`` (gone from setuptools >= 81), so
 #     they cannot be imported in a current environment at all.
@@ -44,21 +44,27 @@ dependencies = [
     "numpy>=1.23",
     "tqdm>=4.60",
     "matplotlib>=3.5.3",
+    # The reference-split loaders (ZINC250k, MOSES) read CSVs with pandas.
+    "pandas>=1.4",
+    # TrainingMonitorCallback samples host and GPU load with these. It works without either (it just records
+    # less), so neither has a tested floor. nvidia-ml-py provides the ``pynvml`` module: the PyPI package
+    # called ``pynvml`` is deprecated and warns on every import.
+    "psutil",
+    "nvidia-ml-py",
 ]
 
 [project.optional-dependencies]
-# Everything with a recorded result is molecular, so most users want this one.
+# RDKit is a large compiled dependency and the core is domain-agnostic graph code, so the molecular domain is the
+# one extra. Everything with a recorded result is molecular, so most users want it.
 chem = ["rdkit>=2023.3.1", "pillow>=9", "scipy>=1.10"]
-# Reference-split loaders (ZINC250k, MOSES) read CSVs with pandas.
-data = ["pandas>=1.4"]
-# GPU / host monitoring in TrainingMonitorCallback.
-monitor = ["psutil", "pynvml"]
-# The runnable PyComex experiments under examples/. The floor is the version the recorded runs used:
-# the recipes' smoke tests pass on it and on the latest. PyComex caps numpy<2 from 0.2x on, so this
-# extra resolves to a numpy 1.x stack where the plain extras do not.
-recipes = ["defog-adapt[chem,data]", "pycomex>=0.13.1"]
-dev = ["pytest>=7", "build", "twine"]
-all = ["defog-adapt[chem,data,monitor,recipes,dev]"]
+
+# Contributor tools: not part of what users install, so a dependency group (PEP 735) and not an extra.
+#   uv pip install -e ".[chem]" --group dev      (pip 25.1 or newer: pip install -e ".[chem]" --group dev)
+# The recipes under examples/ also need PyComex. It is not a dependency, because it caps numpy below 2 and so
+# would hold every user of this package on numpy 1.x; install it, in an environment of its own if you want numpy 2
+# elsewhere. The floor the recipes' smoke tests were run on is pycomex 0.13.1.
+[dependency-groups]
+dev = ["pytest>=7", "pytest-xdist", "build", "twine"]
 
 [project.urls]
 Homepage = "https://github.com/aimat-lab/defog-adapt"
@@ -80,6 +86,8 @@ include = [
     "/NOTICE",
     "/CHANGELOG.md",
     "/CITATION.cff",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
 ]
 
 [tool.pytest.ini_options]

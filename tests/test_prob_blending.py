@@ -14,7 +14,7 @@ the research log, not here: it needs the removed code to run.)
 import pytest
 import torch
 
-from defog_adapt.core import (AdaLNAdapter, AdapterComposition, AdaptedSampler,
+from defog_adapt.core import (CrossAttentionAdapter, AdapterComposition, AdaptedSampler,
                               ConditionBranch, DeFoGModel)
 from defog_adapt.core.data import to_dense
 
@@ -53,7 +53,7 @@ def a_trained_adapter(model, seed=0):
     """An adapter whose gates are NOT zero -- a zero-gate adapter is an exact no-op,
     which would make every blend trivially agree and prove nothing."""
     torch.manual_seed(seed)
-    adapter = AdaLNAdapter.for_base(model, cond_dim=1, hidden=16, time_conditioned=True).eval()
+    adapter = CrossAttentionAdapter.for_base(model, cond_dim=1, hidden=16, time_conditioned=True).eval()
     with torch.no_grad():
         for lay in adapter.gate:
             for s in lay:

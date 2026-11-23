@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_FILES = sorted([ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "CLAUDE.md",
+DOC_FILES = sorted([ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "CLAUDE.md", ROOT / "CONTRIBUTING.md",
+                    ROOT / "SECURITY.md",
                     *(ROOT / "docs").glob("*.md"), *(ROOT / "examples").glob("*.md")])
 DOC_FILES = [p for p in DOC_FILES if p.exists()]
 
@@ -91,5 +92,8 @@ def test_the_anchor_slugger_agrees_with_github_on_the_headings_this_repo_links_t
         ("What the condition means: the label convention", "what-the-condition-means-the-label-convention"),
         ("The adapter base is a re-packaged checkpoint", "the-adapter-base-is-a-re-packaged-checkpoint"),
         ("Features with thin evidence", "features-with-thin-evidence"),
+        # An emoji is dropped but the space after it stays, so the anchor starts with a hyphen. Checked against
+        # GitHub's own rendering of a README with emoji headings: "## 🚀 Overview" is served as "#-overview".
+        ("📊 Results at a glance", "-results-at-a-glance"),
     ]:
         assert slug(heading) == expected

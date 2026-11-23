@@ -68,7 +68,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import decode_valid, label_graphs, property_fn, zinc_vocabulary  # noqa: E402
 
 from defog_adapt.core import (  # noqa: E402
-    AdaLNAdapter, AdaptedSampler, AdapterComposition, ComposedSizeDistribution, ConditionBranch,
+    CrossAttentionAdapter, AdaptedSampler, AdapterComposition, ComposedSizeDistribution, ConditionBranch,
     DeFoGModel, FeynmanKacSampler, LearnedPropertyEnergy, LearnedSizeDistribution,
     MoleculePropertyEnergy, PropertyHead, SizeBranch, StandardisedEnergy,
 )
@@ -84,7 +84,7 @@ RDLogger.DisableLog("rdApp.*")
 class Steered:
     """One steered property: its adapter, the optional head and size model, and the target."""
     name: str
-    adapter: AdaLNAdapter
+    adapter: CrossAttentionAdapter
     head: Optional[PropertyHead]
     size_model: Optional[LearnedSizeDistribution]
     target: Optional[float]
@@ -178,10 +178,17 @@ def read_properties(graphs, specs, atom_dec, bond_dec):
     return out
 
 
-def evaluation_targets(specs, k, seed, data_root, atom_enc, bond_enc, atom_dec, bond_dec):
-    """``k`` target tuples read off real validation molecules (their DECODED property values), so
-    every target is one that some molecule actually achieves."""
-    pool = list(zinc_reference.load_reference_split(data_root).val_smiles)
+def evaluation_targets(specs, k, seed, data_root, atom_enc, bond_enc, atom_dec, bond_dec,
+                       split="validation"):
+    """``k`` target tuples read off real molecules of ``split`` (their DECODED property values), so
+    every target is one that some molecule actually achieves.
+
+    ``split`` is ``"validation"`` (where configurations are chosen) or ``"test"`` (held out: one
+    evaluation pass, with a configuration already frozen on validation)."""
+    if split not in ("validation", "test"):
+        raise ValueError(f"split must be 'validation' or 'test', got {split!r}")
+    reference = zinc_reference.load_reference_split(data_root)
+    pool = list(reference.val_smiles if split == "validation" else reference.test_smiles)
     order = np.random.default_rng(seed).permutation(len(pool))
     _, _, kekulize = zinc_vocabulary()
     targets = []
@@ -253,7 +260,7 @@ def main() -> int:
     print(vocabulary.check_model(base, atom_types, bond_types, what=f"base {args.base}"))
     specs = []
     for k, name in enumerate(args.property):
-        adapter = AdaLNAdapter.load(args.adapter[k], device=device).eval()
+        adapter = CrossAttentionAdapter.load(args.adapter[k], device=device).eval()
         adapter.check_compatible(base)
         head = PropertyHead.load(args.head[k], device=device) if args.head else None
         size = (LearnedSizeDistribution.load(args.size[k], device=device)

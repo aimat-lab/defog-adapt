@@ -68,7 +68,7 @@ def test_the_core_and_the_data_loaders_import_without_rdkit():
         import sys
         sys.modules["rdkit"] = None            # `import rdkit` now raises ImportError
         import defog_adapt.core, defog_adapt.data
-        from defog_adapt.core import DeFoGModel, FeynmanKacSampler, AdaLNAdapter
+        from defog_adapt.core import DeFoGModel, FeynmanKacSampler, CrossAttentionAdapter
         print("ok")
     """)
     assert proc.returncode == 0 and "ok" in proc.stdout, proc.stdout + proc.stderr
