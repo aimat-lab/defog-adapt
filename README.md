@@ -47,7 +47,10 @@ which is not bundled because it caps numpy below 2.
 ## 📊 Results at a glance
 
 <p align="center">
-  <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering." width="760">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/results_logp_dark.png">
+    <img src="docs/assets/results_logp.png" alt="Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering." width="760">
+  </picture>
 </p>
 
 The model trained end to end on the property had the lowest error. An adapter on a frozen base gets most of the way

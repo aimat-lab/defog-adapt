@@ -64,7 +64,8 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   scan **every commit**, not just the tip: the intermediate commits of a port are where leaks hide.
 - **Dependency floors are tested**, not guessed: the suite passes with every dependency at its minimum on
   Python 3.10. Change a floor only by running it.
-- Nothing is pushed or published (GitHub, TestPyPI, PyPI) without an explicit go-ahead.
+- Commits and pushes to the working branch need no go-ahead. Releasing does: tags, TestPyPI and PyPI uploads, making
+  the repository public, merging a pull request.
 
 ## Releasing
 

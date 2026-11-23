@@ -42,12 +42,34 @@ def synthetic(**missing):
             "arms": arms}
 
 
-def test_the_figure_is_drawn_from_its_data_file(figure, tmp_path):
+def hex_to_rgb(color: str):
+    return tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+def read_png(path):
+    import matplotlib.image as mpimg
+    return mpimg.imread(path)[:, :, :3]
+
+
+def close(a, b, tolerance=0.012) -> bool:
+    return max(abs(x - y) for x, y in zip(a, b)) < tolerance
+
+
+@pytest.mark.parametrize("theme", ("light", "dark"))
+def test_the_figure_is_drawn_from_its_data_file_in_each_theme(figure, tmp_path, theme):
     data = tmp_path / "data.json"
     data.write_text(json.dumps(synthetic()), encoding="utf-8")
     out = tmp_path / "figure.png"
-    figure.main(data, out)
+    figure.main(data, out, theme)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and out.stat().st_size > 10_000
+    assert close(read_png(out)[0, 0], hex_to_rgb(figure.THEMES[theme]["surface"])), "the theme did not reach the picture"
+
+
+def test_an_unknown_theme_is_refused(figure, tmp_path):
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps(synthetic()), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown theme"):
+        figure.main(data, tmp_path / "figure.png", "sepia")
 
 
 @pytest.mark.parametrize("arm", ARMS)
@@ -189,3 +211,31 @@ def test_no_text_calls_the_end_to_end_model_the_most_accurate_while_its_lead_ove
         text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
         for claim in ("most accurate", "more accurate than any"):
             assert claim not in text, f"{name} says {claim!r}, but the lead over Feynman-Kac ({gap:.3f}) is inside the spread"
+
+
+@pytest.mark.parametrize("theme, name", [("light", "results_logp.png"), ("dark", "results_logp_dark.png")])
+def test_each_committed_figure_has_its_theme_and_bars_that_end_where_the_data_file_says(figure, theme, name):
+    """Measured on the pixels of the committed file: a figure that was not redrawn after the data (or the palette)
+    changed, or one committed under the other theme's name, is caught here rather than by a reader."""
+    image, arms, colors = read_png(ASSETS / name), committed()["arms"], figure.THEMES[theme]
+    assert close(image[0, 0], hex_to_rgb(colors["surface"])), f"{name} does not have the {theme} surface"
+    top = max(arms[arm]["mae_mean"] + (arms[arm]["mae_sd"] or 0.0) for arm, _ in figure.ROWS)
+    scale = figure.MAX_BAR / top
+    centres = figure.layout()[1]
+    for (arm, _), y in zip(figure.ROWS, centres):
+        color = hex_to_rgb(colors["accent"] if arm == figure.HEADLINE else colors["context"])
+        row = image[int(round((y + 7) * 2))]      # 7 px below the bar's centre: under the whisker's caps, above the rounded corner
+        solid = [x for x in range(row.shape[0]) if close(row[x], color)]
+        assert solid, f"{name}: no {arm} bar found"
+        expected = (figure.BAR_X0 + arms[arm]["mae_mean"] * scale) * 2     # the file is written at twice the layout's pixels
+        assert abs(max(solid) - expected) <= 3, f"{name}: the {arm} bar ends at {max(solid)} px, the data says {expected:.0f}"
+
+
+def test_the_readme_serves_the_dark_figure_to_dark_pages_and_the_light_one_otherwise():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    block = readme[readme.index("Results at a glance"):]
+    block = block[block.index("<picture>"):block.index("</picture>")]
+    assert 'media="(prefers-color-scheme: dark)" srcset="docs/assets/results_logp_dark.png"' in block
+    assert block.index("<source") < block.index('<img src="docs/assets/results_logp.png"'), "the fallback image must follow the source"
+    for name in ("results_logp.png", "results_logp_dark.png"):
+        assert (ASSETS / name).exists(), name
