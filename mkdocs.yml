@@ -1,0 +1,96 @@
+# The documentation site. Preview it with `mkdocs serve`, check it with `mkdocs build --strict`.
+#
+# Written to be portable. Material for MkDocs reaches end of life on 2027-05-05 and its successor, Zensical, reads
+# this file, so it asks for nothing but the built-in search: no `hooks`, no other plugins, and the workflow deploys
+# through GitHub's Pages artifact flow rather than `mkdocs gh-deploy`. tests/test_docs_site.py keeps it that way.
+site_name: defog-adapt
+site_description: Steer a frozen DeFoG graph generator toward a property target, with adapters, Feynman-Kac steering and RL fine-tuning.
+site_url: https://aimat-lab.github.io/defog-adapt/
+repo_url: https://github.com/aimat-lab/defog-adapt
+repo_name: aimat-lab/defog-adapt
+copyright: MIT licence. Not affiliated with or endorsed by the DeFoG authors.
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+# The site is the short, high-level documentation. The detailed notes stay in docs/ for the repository (readable on
+# GitHub, still checked by tests/test_docs.py) and are not published here; neither are the scripts and data that
+# build the banner and the results figure. The figure itself (assets/results_logp.png) is on the Home page; the data file
+# behind it is not part of the site. `mkdocs build --strict` does NOT complain about a page that links an excluded file
+# (it only logs it), so tests/test_docs_site.py checks both ways: a page must not link a file that is left out, and the
+# site must not publish a file from docs/ that no page uses.
+exclude_docs: |
+  /adapters.md
+  /steering.md
+  /rl.md
+  /caveats.md
+  /results.md
+  /migration.md
+  *.py
+  /assets/banner/trajectory.json
+  /assets/banner/README.md
+  /assets/results_logp.json
+
+# A page that is not in the nav, or a link or anchor that goes nowhere, fails `mkdocs build --strict`.
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    anchors: warn
+    unrecognized_links: warn
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.snippets:      # the README's tested code is included, not copied: there is one copy
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts: concepts.md
+  - Guides:
+      - Train an adapter: guides/train-an-adapter.md
+      - Steer toward a target: guides/steer-toward-a-target.md
+  - Reference:
+      - Main classes: reference/main-classes.md
+      - Recipes: reference/recipes.md
+  - About:
+      # An external link, not a page: CHANGELOG.md links to files outside the site, and it has its own editors.
+      - Changelog: https://github.com/aimat-lab/defog-adapt/blob/main/CHANGELOG.md
+      - Contributing: about/contributing.md
+      - Citation and licence: about/citation-and-licence.md
+      - Limits: about/limits.md

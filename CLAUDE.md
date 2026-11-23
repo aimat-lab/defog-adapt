@@ -19,6 +19,9 @@ purpose. Do not re-add a feature without evidence that it works, and say what th
   `tests/test_recipes.py` opt-in smoke runs of every recipe
 - `examples/` the quickstart, the PyComex recipes (optional `recipes` extra) and `steer_zinc.py`, the assembly
 - `docs/` adapters, steering, rl, results, caveats, migration
+- `mkdocs.yml`, `docs/{index,getting-started,concepts}.md`, `docs/{guides,reference,about}/` the documentation site
+  (Material for MkDocs): the short, high-level version. The six detailed notes above are excluded from it on purpose,
+  and code on its pages is included from the README and the notes by `--8<--` markers, never copied
 
 ## Commands
 
@@ -27,6 +30,7 @@ uv venv --python 3.12 .venv && uv pip install -e ".[chem]" --group dev   # CPU t
 OMP_NUM_THREADS=2 .venv/bin/python -m pytest -n 8                       # unit tests, no network, ~30 s
 DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest -m parity   # parity gate (local only)
 DEFOG_ADAPT_HOME=/path/to/data DEFOG_ADAPT_CKPTS=/path/to/ckpts .venv/bin/python -m pytest tests/test_recipes.py
+uv pip install --group docs && mkdocs build --strict                     # the documentation site: no PyTorch needed
 ```
 
 Without `OMP_NUM_THREADS=2` the suite takes many times longer: tiny tensors across every core thrash. The
@@ -46,6 +50,11 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   the library API changes, and assert on a recipe's own output, not on PyComex's banner (it varies by version).
 - **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
   in one and every link and anchor. Every number in `docs/results.md` needs a source and its protocol.
+- **The site stays the short version.** A new page goes in the nav of `mkdocs.yml`, detail stays in the notes, and a
+  number on the site has the same source as in `docs/results.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
+  `tests/test_docs_site.py` guard the nav, the exclusions, the includes and the config. Keep the config portable (no
+  hooks, no plugin beyond search, publish through the Pages artifact flow, never `gh-deploy`): Material for MkDocs
+  ends on 2027-05-05 and its successor reads the same file. Publishing is dormant until the repository is public.
 - **No network and no local data in unit tests.** Reference-split tests pass `download=False`.
 - **Never commit** checkpoints, datasets, experiment output, cluster or account names, job IDs, local paths, or
   the names of sibling projects. `tests/test_no_private_references.py` fails on the generic patterns (paths,

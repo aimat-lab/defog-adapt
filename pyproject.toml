@@ -65,6 +65,9 @@ chem = ["rdkit>=2023.3.1", "pillow>=9", "scipy>=1.10"]
 # elsewhere. The floor the recipes' smoke tests were run on is pycomex 0.13.1.
 [dependency-groups]
 dev = ["pytest>=7", "pytest-xdist", "build", "twine"]
+# The documentation site. No torch: the site is hand-written pages, with nothing generated from the package.
+# `mkdocs<2` because MkDocs 2.0 will not run Material sites; see mkdocs.yml.
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
 
 [project.urls]
 Homepage = "https://github.com/aimat-lab/defog-adapt"
@@ -80,6 +83,7 @@ include = [
     "/tests",
     "/docs",
     "/examples",
+    "/mkdocs.yml",
     "/README.md",
     "/CLAUDE.md",
     "/LICENSE",

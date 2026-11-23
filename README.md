@@ -66,6 +66,7 @@ Everything here runs on a CPU, with no downloads and no checkpoints. This trains
 adapter on a few dozen small molecules, then samples with the adapter steered toward two logP targets (about half a
 minute):
 
+<!-- --8<-- [start:quickstart] -->
 ```python
 import pytorch_lightning as pl
 import torch
@@ -169,14 +170,17 @@ for target in (0.0, 2.0):
         f"mean logP {mean_logp:.2f}, e.g. {found[:3]}"
     )
 ```
+<!-- --8<-- [end:quickstart] -->
 
 It prints one line per target, after some start-up messages from PyTorch Lightning (the details vary a little
 between machines and versions):
 
+<!-- --8<-- [start:quickstart_output] -->
 ```text
 target logP 0.0: 57/64 valid, mean logP -0.26, e.g. ['NCCO', 'CC(O)CO', 'NC1=[O+]C(O)O1.O']
 target logP 2.0: 58/64 valid, mean logP 1.95, e.g. ['CCC(CC)CC', 'CC1CCC1C', 'CCCC']
 ```
+<!-- --8<-- [end:quickstart_output] -->
 
 **This is a wiring check, not a result.** The model is tiny and sees a few dozen molecules, so expect some odd ones
 among the samples; what it shows is the idea: one frozen base, and a small adapter that moves the samples toward the
@@ -191,6 +195,7 @@ To steer a real model you need trained checkpoints. None ship with 0.1; the reci
 [`examples/`](examples/README.md) train them. The assembly is [`examples/steer_zinc.py`](examples/steer_zinc.py),
 and the core of it is:
 
+<!-- --8<-- [start:fk_steering] -->
 ```python
 import torch
 
@@ -242,6 +247,7 @@ sampler = FeynmanKacSampler(
 )
 graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target))
 ```
+<!-- --8<-- [end:fk_steering] -->
 
 </details>
 
@@ -279,6 +285,7 @@ papers behind each method. If you use it, please cite this package and the DeFoG
 <details>
 <summary>BibTeX</summary>
 
+<!-- --8<-- [start:bibtex] -->
 ```bibtex
 @software{teufel2026defogadapt,
   author = {Teufel, Jonas},
@@ -297,6 +304,7 @@ papers behind each method. If you use it, please cite this package and the DeFoG
   url       = {https://arxiv.org/abs/2410.04263}
 }
 ```
+<!-- --8<-- [end:bibtex] -->
 
 </details>
 
