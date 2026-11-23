@@ -28,7 +28,7 @@ Import name `defog_adapt`. Code only: no model weights ship.
 - The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
   model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
   over three seeds (`docs/results.md` section 9; `docs/assets/results_logp.json` holds the data and
-  `docs/assets/results_logp.py` draws it).
+  `docs/assets/results_logp.py` draws it, in a light and a dark variant).
 - `docs/assets/banner/`: the animated README banner (one recorded sampler run, base alone and then with a logP
   adapter, from the same noise), its recorded trajectory and the scripts that made it.
 - The README opens with installation, the results figure (`docs/assets/results_logp.py`) and a self-contained
