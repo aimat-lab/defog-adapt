@@ -44,7 +44,8 @@ graphs = sampler.sample(10)                                # ten molecular graph
 
 ## Results at a glance
 
-![Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering.](assets/results_logp.png)
+![Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering.](assets/results_logp.png#only-light)
+![Bar chart of the logP error of five approaches on the held-out test split, lower is better, each the mean over three sampling seeds of one trained model: 1.260 for the unconditional base, 0.181 for a model trained end to end on logP, 0.446 for a FiLM adapter, 0.272 for a cross-attention adapter and 0.216 for the cross-attention adapter with Feynman-Kac steering.](assets/results_logp_dark.png#only-dark)
 
 The model trained end to end on the property had the lowest error. An adapter on a frozen base gets most of the way
 there, and Feynman-Kac steering closer still, at a cost in sample diversity (uniqueness 0.79, against 1.0 for the

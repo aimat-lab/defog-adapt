@@ -192,11 +192,17 @@ def readme_figure():
     return squash(alt), squash(caption)
 
 
+# The figure comes in a light and a dark variant. Material shows the one that matches the reader's colour scheme, by the
+# `#only-light` and `#only-dark` suffixes of the image links, so each image must carry its suffix or both would show.
+LIGHT_FIGURE = r"!\[([^\]]*)\]\(assets/results_logp\.png#only-light\)"
+DARK_FIGURE = r"!\[([^\]]*)\]\(assets/results_logp_dark\.png#only-dark\)"
+
+
 def home_figure():
-    """The alt text of the figure on the Home page, and the text under it up to the next heading."""
+    """The alt text of the figure on the Home page, and the text under the figures up to the next heading."""
     home = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
-    image = re.search(r"!\[([^\]]*)\]\(assets/results_logp\.png\)", home)
-    assert image, "the Home page does not show the results figure (assets/results_logp.png)"
+    image = re.search(LIGHT_FIGURE, home)
+    assert image, "the Home page does not show the light results figure (assets/results_logp.png#only-light)"
     return squash(image.group(1)), squash(re.split(r"\n## ", home[image.end():], maxsplit=1)[0])
 
 
@@ -216,6 +222,14 @@ def test_the_home_page_shows_the_figure_with_the_readme_alt_text_and_caption():
     home_alt, home_text = home_figure()
     assert home_alt == readme_alt, "the alt text of the figure on the Home page is not the README's"
     assert readme_caption in home_text, "the text under the figure on the Home page is not the README's caption"
+
+
+@needs_results
+def test_the_home_page_shows_the_dark_figure_to_dark_mode_with_the_same_alt_text():
+    home = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
+    dark = re.search(DARK_FIGURE, home)
+    assert dark, "the Home page does not show the dark results figure (assets/results_logp_dark.png#only-dark)"
+    assert squash(dark.group(1)) == home_figure()[0], "the alt text of the dark figure is not the light figure's"
 
 
 @needs_results
