@@ -28,7 +28,10 @@ Import name `defog_adapt`. Code only: no model weights ship.
   (main classes, recipes, migration) and about (limits, results and caveats, contributing, citation). Four diagrams
   (`docs/assets/diagrams/`) show the recorded pipeline, how an adapter plugs in, Feynman-Kac steering, and what a steered
   run needs and what is optional in it; they are schematic, drawn from scripts, and their text is outlines so that they
-  need no font.
+  need no font. The "Steer toward a target" guide is a tutorial: one runnable script
+  (`docs/guides/steer_toward_a_target.py`) is shown in short steps, adapter alone first and then a size model and
+  Feynman-Kac steering, each step with its text, and in full at the bottom of the page; a test runs the script on tiny
+  checkpoints.
 - The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
   model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
   over three seeds (`docs/about/results-and-caveats.md`; `docs/assets/results_logp.json` holds the data and

@@ -21,7 +21,8 @@ purpose. Do not re-add a feature without evidence that it works, and say what th
 - `docs/` the documentation: Home and Getting started, `concepts/` (overview, adapters, steering, RL), `guides/`,
   `reference/` (main classes, recipes, migration) and `about/` (limits, results and caveats, contributing, citation)
 - `mkdocs.yml` the documentation site (Material for MkDocs). Every page of `docs/` is in its nav, and code on its pages is
-  included from the README and `docs/concepts/adapters.md` by `--8<--` markers, never copied
+  included from the README, `docs/concepts/adapters.md` and `docs/guides/steer_toward_a_target.py` (the one script of the
+  steer tutorial, shown in pieces by section and in full at the end of its page) by `--8<--` markers, never copied
 
 ## Commands
 
@@ -48,8 +49,10 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   code under test, not the test. A test that cannot fail is not a test; this found more than one vacuous one.
 - **Examples must run.** A recipe that is not run has already rotted. Keep `tests/test_recipes.py` green when
   the library API changes, and assert on a recipe's own output, not on PyComex's banner (it varies by version).
-- **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
-  in one and every link and anchor. Every number on `docs/about/results-and-caveats.md` needs a source and its protocol.
+- **Documentation is tested.** `tests/test_docs.py` parses every code block (an include is expanded first), checks every
+  `defog_adapt` import in one and every link and anchor. `tests/test_steer_tutorial.py` runs the steer tutorial's script
+  unchanged on tiny checkpoints and checks the page's structure. Every number on `docs/about/results-and-caveats.md`
+  needs a source and its protocol.
 - **The site is the documentation.** Every page of `docs/` is in the nav of `mkdocs.yml`, and a number on any page has
   the same source as on `docs/about/results-and-caveats.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
   `tests/test_docs_site.py` guard the nav, the exclusions, the includes and the config. Keep the config portable (no

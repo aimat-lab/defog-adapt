@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from _snippets import INCLUDE as SNIPPET, expand_includes       # tests/ has no __init__.py; pytest prepends this dir
+
 ROOT = Path(__file__).resolve().parents[1]
 DOC_FILES = sorted([ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "CLAUDE.md", ROOT / "CONTRIBUTING.md",
                     ROOT / "SECURITY.md",
@@ -22,8 +24,20 @@ pytestmark = pytest.mark.skipif(not (ROOT / "docs").is_dir(), reason="docs/ is n
 
 
 def python_blocks(path):
+    """The python blocks of a page, with the code that an include line in a block brings in (``--8<-- "file.py:section"``)."""
     for match in re.finditer(r"```python\n(.*?)```", path.read_text(encoding="utf-8"), flags=re.S):
-        yield match.group(1), path.read_text(encoding="utf-8")[: match.start()].count("\n") + 1
+        yield expand_includes(match.group(1), ROOT), path.read_text(encoding="utf-8")[: match.start()].count("\n") + 1
+
+
+def test_the_block_parser_sees_the_code_a_page_includes():
+    """A page that shows its code by include (the steer tutorial does) is checked only if the parser reads the include."""
+    guide = ROOT / "docs" / "guides" / "steer-toward-a-target.md"
+    if not guide.exists():
+        pytest.skip("the site pages are not part of an installed wheel")
+    blocks = [code for code, _line in python_blocks(guide)]
+    assert len(blocks) >= 10, f"the steer tutorial shows {len(blocks)} python blocks: are its includes no longer expanded?"
+    assert not any("--8<--" in code for code in blocks), "an include line reached a block unexpanded"
+    assert any("FeynmanKacSampler(" in code for code in blocks), "the Feynman-Kac step is not among the parsed blocks"
 
 
 def slug(heading: str) -> str:
@@ -101,9 +115,6 @@ def test_every_github_link_to_this_repository_points_at_something_that_exists(pa
         if anchor and dest.suffix == ".md":
             assert anchor[1:] in anchors(dest), \
                 f"{path.name}: the GitHub link to {target}{anchor} has no heading '{anchor[1:]}' in {dest.name}"
-
-
-SNIPPET = re.compile(r'^--8<-- "([^":]+)(?::([\w-]+))?"[ \t]*$', flags=re.M)
 
 
 @pytest.mark.parametrize("path", DOC_FILES, ids=lambda p: p.relative_to(ROOT).as_posix())
