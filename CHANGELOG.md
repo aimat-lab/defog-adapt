@@ -28,10 +28,13 @@ Import name `defog_adapt`. Code only: no model weights ship.
   (main classes, recipes, migration) and about (limits, results and caveats, contributing, citation). Four diagrams
   (`docs/assets/diagrams/`) show the recorded pipeline, how an adapter plugs in, Feynman-Kac steering, and what a steered
   run needs and what is optional in it; they are schematic, drawn from scripts, and their text is outlines so that they
-  need no font. The "Steer toward a target" guide is a tutorial: one runnable script
-  (`docs/guides/steer_toward_a_target.py`) is shown in short steps, adapter alone first and then a size model and
-  Feynman-Kac steering, each step with its text, and in full at the bottom of the page; a test runs the script on tiny
-  checkpoints.
+  need no font. The three guides are tutorials, each around one runnable script in `docs/guides/` that is shown in short
+  steps and in full at the bottom of its page. "Train an unconditional base" trains a small base on your own SMILES, with
+  an optional RL cleanup; "Train an adapter" labels the graphs by the decoded graph, builds, trains and checks an adapter,
+  and fits the size model and the property head; "Steer toward a target" runs the adapter alone, then adds a size model
+  and Feynman-Kac steering. They write out the recorded settings and explain each one, and the code is wrapped for the
+  code window (no line over 88 characters, a call with four or more arguments one per line). A test runs the three scripts
+  one after the other on tiny data, so that the files each writes are the ones the next loads.
 - The five-way logP comparison behind the README figure, trained and measured in this repository: the unconditional base, a
   model trained end to end, a FiLM adapter, a cross-attention adapter and Feynman-Kac on top of it, on the held-out test split
   over three seeds (`docs/about/results-and-caveats.md`; `docs/assets/results_logp.json` holds the data and

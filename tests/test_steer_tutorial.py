@@ -1,12 +1,9 @@
-"""The tutorial on the "Steer toward a target" page.
+"""What is specific to the "Steer toward a target" tutorial.
 
-The page walks through one script, ``docs/guides/steer_toward_a_target.py``, in pieces: each piece is a section of that file,
-included by marker, and the whole file is the last thing on the page. So the page and its code can drift apart in a few
-ways, and each has a test here. A piece that no longer runs: the script is run, unchanged, on tiny checkpoints. A piece
-that is missing, shown twice or out of order. Code in the script that no step shows. Code pasted into the page, which would
-be a second copy. A final script that is not the whole file, or not last. An optional step that stops saying it is optional.
-And the judge, which tiny untrained models cannot exercise (they decode to nothing), is tested on molecules whose answers
-are known.
+The structure of its page (pieces, order, the final script, the optional steps) is checked with the other guides in
+test_tutorial_pages.py, its settings against the presets in test_tutorial_settings.py, and the three guides run in a chain in
+test_tutorial_chain.py. Here its script is run on its own, on tiny checkpoints that are not the other guides' output, and
+its judge is tested on molecules whose answers are known, because tiny untrained models decode to nothing.
 """
 import contextlib
 import io
@@ -17,81 +14,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from _snippets import INCLUDE, MARKER, included, sections    # tests/ has no __init__.py; pytest prepends this dir
+from _snippets import included                                      # tests/ has no __init__.py; pytest prepends this dir
+from _tutorials import BY_KEY
 
-ROOT = Path(__file__).resolve().parents[1]
-PAGE = ROOT / "docs" / "guides" / "steer-toward-a-target.md"
-SCRIPT = ROOT / "docs" / "guides" / "steer_toward_a_target.py"
-NAME = "docs/guides/steer_toward_a_target.py"
-pytestmark = pytest.mark.skipif(not SCRIPT.is_file(), reason="docs/ is not part of an installed wheel")
+TUTORIAL = BY_KEY["steer"]
+pytestmark = pytest.mark.skipif(not TUTORIAL.script_path.is_file(), reason="docs/ is not part of an installed wheel")
 
-#: the four files the script loads, as its header says
+#: the four files the script loads
 CHECKPOINTS = {"base.ckpt", "logp_adapter.ckpt", "logp_head.ckpt", "logp_head_size.ckpt"}
-#: steps 1 to 4 build the proposal, which is required; every layer after it is optional (as in the figure at the top)
-REQUIRED_STEPS = {1, 2, 3, 4}
 
 
-def page_text() -> str:
-    return PAGE.read_text(encoding="utf-8")
-
-
-def script_text() -> str:
-    return SCRIPT.read_text(encoding="utf-8")
-
-
-# =============================================================================================== the page and the script
-def test_the_page_only_includes_code_it_never_pastes_it():
-    """One copy of the code: every python block on the page is a single include line, nothing typed."""
-    blocks = re.findall(r"^```python\n(.*?)^```", page_text(), flags=re.S | re.M)
-    assert len(blocks) >= 10, f"the page shows {len(blocks)} python blocks: has its fence syntax changed?"
-    for body in blocks:
-        assert INCLUDE.fullmatch(body.strip()), f"a python block on the page holds typed code, not an include:\n{body}"
-
-
-def test_every_section_of_the_script_is_on_the_page_once_and_in_file_order():
-    on_page = [section for name, section in INCLUDE.findall(page_text()) if name == NAME and section]
-    in_script = sections(script_text())
-    assert len(in_script) >= 10, f"the script has {len(in_script)} sections: has its marker syntax changed?"
-    assert on_page == in_script, f"the page includes {on_page}, the script has {in_script} (in this order, each once)"
-
-
-def test_the_whole_script_is_the_last_thing_on_the_page_and_is_there_once():
-    page = page_text()
-    whole = [m for m in INCLUDE.finditer(page) if m.group(1) == NAME and not m.group(2)]
-    assert len(whole) == 1, f"the whole script is included {len(whole)} times, it should be once"
-    assert page[:whole[0].start()].rstrip().endswith("```python"), "the whole script is not in a python block"
-    assert page[whole[0].end():].strip() == "```", "something follows the final script on the page"
-    headings = re.findall(r"^#+ (.*)$", page, flags=re.M)
-    assert headings[-1] == "The final script", f"the last heading is {headings[-1]!r}, not 'The final script'"
-
-
-def test_no_code_in_the_script_goes_unshown():
-    """Every line of code lies in a section, so the steps show everything that the final script runs."""
-    inside = False
-    for number, line in enumerate(script_text().splitlines(), 1):
-        marker = MARKER.match(line)
-        if marker:
-            inside = marker.group(1) == "start"
-        elif not inside and line.strip() and not line.lstrip().startswith("#"):
-            pytest.fail(f"{SCRIPT.name}:{number}: `{line}` is outside every section, so no step shows it")
-
-
-def test_the_steps_are_numbered_and_the_optional_ones_say_so():
-    steps = re.findall(r"^## (\d+)\. (.*)$", page_text(), flags=re.M)
-    assert [int(number) for number, _ in steps] == list(range(1, 9)), f"the steps are {steps}"
-    for number, title in steps:
-        said_optional = title.endswith("(optional)")
-        assert said_optional == (int(number) not in REQUIRED_STEPS), \
-            f"step {number} '{title}': required steps are {sorted(REQUIRED_STEPS)}, and an optional one says '(optional)'"
-
-
-def test_the_script_loads_exactly_the_files_its_header_names():
-    text = script_text()
-    loaded = set(re.findall(r'\.load\("([^"]+)"\)', text))
+def test_the_script_loads_exactly_the_four_files_of_the_guides_before_it():
+    loaded = set(re.findall(r'\.load\("([^"]+)"\)', TUTORIAL.script_text()))
     assert loaded == CHECKPOINTS, f"the script loads {sorted(loaded)}"
-    header = text.split("# --8<--")[0]
-    for name in CHECKPOINTS:
-        assert name in header, f"the header of the script does not name {name}"
 
 
 # ======================================================================================== the script, run for real
@@ -117,18 +52,21 @@ def write_tiny_checkpoints(folder: Path) -> None:
 
 @pytest.fixture(scope="module")
 def ran(tmp_path_factory):
-    """The script's own namespace and its printed output, after running it, unchanged, in a folder with tiny checkpoints."""
+    """The script's own namespace and its printed output, after running it in a folder with tiny checkpoints. The only change
+    is toy scale: the recorded 500 steps would take minutes, so they are shrunk in the text (and the test fails if they
+    are no longer there to shrink)."""
     pytest.importorskip("rdkit")
     pytest.importorskip("torch")
-    from defog_adapt.presets import ADAPTER_SAMPLING
 
+    code = TUTORIAL.script_text()
+    assert code.count("sample_steps=500") == 2, "the script no longer has the two `sample_steps=500` this test shrinks"
+    code = code.replace("sample_steps=500", "sample_steps=3")
     folder = tmp_path_factory.mktemp("steer")
     write_tiny_checkpoints(folder)
     namespace, out = {"__name__": "__main__"}, io.StringIO()
     with pytest.MonkeyPatch.context() as patch, contextlib.redirect_stdout(out):
         patch.chdir(folder)
-        patch.setitem(ADAPTER_SAMPLING, "sample_steps", 3)           # toy scale: the recorded 500 steps would be minutes
-        exec(compile(script_text(), str(SCRIPT), "exec"), namespace)
+        exec(compile(code, str(TUTORIAL.script_path), "exec"), namespace)
     return namespace, out.getvalue()
 
 
@@ -142,7 +80,9 @@ def test_the_script_runs_unchanged_and_makes_the_three_runs(ran):
 
 def test_the_trace_has_the_fields_the_page_documents(ran):
     namespace, _ = ran
-    documented = re.findall(r"^\| `(\w+)` \|", page_text(), flags=re.M)
+    table = re.search(r"^\| Field \|.*?(?:\n\n|\Z)", TUTORIAL.page_text(), flags=re.S | re.M)
+    assert table, "the page has no table headed 'Field' for the trace"
+    documented = re.findall(r"^\| `(\w+)` \|", table.group(0), flags=re.M)
     assert {"ess_over_k", "logw_range", "resampled"} <= set(documented), f"the page's table documents {documented}"
     trace = namespace["fk_sampler"].trace
     assert trace, "the Feynman-Kac run recorded no checkpoint"
@@ -157,7 +97,7 @@ def test_the_judge_measures_validity_uniqueness_and_error_on_decoded_molecules()
     from rdkit.Chem import Crippen
 
     namespace = {"domain": SimpleNamespace(decode=lambda graph: graph)}      # a graph here is already its molecule, or None
-    exec(included(script_text(), "judge_fn"), namespace)
+    exec(included(TUTORIAL.script_text(), "judge_fn"), namespace)
     judge = namespace["judge"]
     ethanol, benzene = Chem.MolFromSmiles("CCO"), Chem.MolFromSmiles("c1ccccc1")
     target = 1.0

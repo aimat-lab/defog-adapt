@@ -23,13 +23,15 @@ graphs.
 ## The pipeline, in order
 
 1. **Train a base** with `training__e1.py --DATASET "'zinc'"`. The recorded run is 300 epochs, which does not fit in one
-   cluster allocation, so the recipe chains across wall-clock windows; its docstring explains how.
+   cluster allocation, so the recipe chains across wall-clock windows; its docstring explains how. The guide
+   [Train an unconditional base](../guides/train-an-unconditional-base.md) does the same at a small scale.
 2. **Clean it up** with `rl_sanity__zinc.py`, twice. The second round starts from the first round's best checkpoint. The
    recorded adapters were trained on a base that had had exactly these two rounds, so steps 1 and 2 reproduce their
    lineage. See [the adapter base is a re-packaged checkpoint](../about/results-and-caveats.md#the-adapter-base-is-a-re-packaged-checkpoint)
    for a trap in reading that checkpoint's stored hyperparameters.
 3. **Train an adapter** per property with `adapter_training__zinc.py`, then a **head and a size model** for it with
-   `fit_property_head__zinc.py --with-size-model`, using the *same* `--property-from` convention.
+   `fit_property_head__zinc.py --with-size-model`, using the *same* `--property-from` convention. The guide
+   [Train an adapter](../guides/train-an-adapter.md) does the same at a small scale.
 4. **Steer** with `steer_zinc.py`, or tighten the adapter first with `adapter_rl_finetune__zinc.py`.
 5. **Compare** the ways of conditioning on one benchmark with `compare_arms__zinc.py`: validation first, to choose the
    guidance weights, then the held-out test split once, with them frozen.

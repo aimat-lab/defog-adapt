@@ -36,8 +36,8 @@ extra_css:
   - stylesheets/extra.css
 
 # Every page of docs/ is part of the site and is in the nav below. What is left out are the scripts and data that build
-# the banner, the results figure and the diagrams, and the tutorial's script (the guide includes its code, in pieces and
-# whole, and the file itself is not published); the figure itself (assets/results_logp.png and its dark variant) is
+# the banner, the results figure and the diagrams, and the tutorials' scripts (each guide includes its code, in pieces and
+# whole, and the files themselves are not published); the figure itself (assets/results_logp.png and its dark variant) is
 # shown on the Home page and on the results page, and the diagrams (assets/diagrams/*.svg) on the pages they explain;
 # the data file behind the figure is not part of the site. `mkdocs build --strict` does
 # NOT complain about a page that links an excluded file (it only logs it), so tests/test_docs_site.py checks both ways:
@@ -86,6 +86,7 @@ nav:
       - Steering at sampling time: concepts/steering.md
       - Reinforcement learning: concepts/rl.md
   - Guides:
+      - Train an unconditional base: guides/train-an-unconditional-base.md
       - Train an adapter: guides/train-an-adapter.md
       - Steer toward a target: guides/steer-toward-a-target.md
   - Reference:

@@ -8,7 +8,8 @@ measure every run the same way. For what the pieces are, see [Concepts](../conce
 
 **Required**
 
-- **A base model and an adapter** trained for the property: see [Train an adapter](train-an-adapter.md).
+- **A base model and an adapter** trained for the property: see [Train an unconditional base](train-an-unconditional-base.md)
+  and [Train an adapter](train-an-adapter.md).
 
 **Optional**
 
@@ -19,8 +20,9 @@ measure every run the same way. For what the pieces are, see [Concepts](../conce
 - **A judge**, which measures the decoded molecules. RDKit is what the recorded numbers used, a better model also
   works, and you can leave the check out if you trust the generation.
 
-The `fit_property_head__zinc.py` recipe fits the head and, with `--with-size-model`, the size model. Fit both under
-the same label convention as the adapter.
+[Train an adapter](train-an-adapter.md) fits the size model and the head in its last two steps, from the same labels as the
+adapter: fit both under the same label convention as the adapter. The `fit_property_head__zinc.py` recipe does the same on
+ZINC250k, with `--with-size-model` for the size model.
 
 ![Diagram of what a steered run needs. In the solid main flow, a proposal, which is a frozen base model with an adapter on it, generates the molecules; the base model and the adapter are both required files. Dashed frames mark what is optional: a size model that draws the number of atoms; a Feynman-Kac add-on in which a property head, the ruler, scores the predicted clean graphs and the candidates are resampled; and a judge that measures the decoded molecules, with RDKit, with a better model or not at all. The classes shown are DeFoGModel, CrossAttentionAdapter, PropertyHead and LearnedSizeDistribution.](../assets/diagrams/steering-roles.svg)
 
@@ -56,9 +58,10 @@ vocabulary for certain and in practice to its weights, so always load the pair t
 
 ## 3. Tie the adapter to your target
 
-A `ConditionBranch` pairs the adapter with the target you want, here a logP of 4, and a guidance weight, which sets how
-hard the adapter pulls. `ADAPTER_WEIGHT` holds the recorded weight of each property. An `AdapterComposition` combines
-branches, one per property (see [Going further](#going-further)).
+An adapter is not tied to one target: it was trained on molecules with many logP values and reads whichever value you
+give it. A `ConditionBranch` fixes one: it pairs the adapter with the target you want, here a logP of 4, and with a
+guidance weight. An `AdapterComposition` holds the base and its branches, which is how several properties combine (see
+[Going further](#going-further)).
 
 ```python
 --8<-- "docs/guides/steer_toward_a_target.py:target"
@@ -66,14 +69,26 @@ branches, one per property (see [Going further](#going-further)).
 
 The target is a raw property value: give it as logP, not as a z-score, because the adapter standardises it itself.
 
+The weight sets how hard the adapter pulls. At every step the sampler takes the base's prediction and moves it `weight`
+times as far toward the adapter's, in log-probabilities: 0 is the base alone, 1 is the adapter's own prediction, and above
+1 pushes past it. 1.5 is the weight recorded for logP (`ADAPTER_WEIGHT` in `defog_adapt.presets` also holds TPSA, SAScore
+and QED). Guiding beyond about 2 degrades validity.
+
 ## 4. Sample with the adapter alone
 
-`AdaptedSampler` runs the base with the adapter acting at every step. `ADAPTER_SAMPLING` holds the recorded sampler
-settings.
+`AdaptedSampler` runs the base with the adapter acting at every step. It takes the base, the composition and four sampling
+settings, written out here as recorded (`ADAPTER_SAMPLING` in `defog_adapt.presets` holds the same four as data).
 
 ```python
 --8<-- "docs/guides/steer_toward_a_target.py:adapter_run"
 ```
+
+| Setting | What it does | Recorded |
+|---|---|---|
+| `sample_steps` | How many denoising steps take the sampler from noise to a graph. | 500 |
+| `eta` | Stochasticity: how many extra random transitions the sampler adds while it denoises. They can undo an earlier choice. 0 switches them off. | 25 |
+| `omega` | Target guidance: an extra pull toward the graph the model currently predicts. 0 switches it off. | 0 |
+| `time_distortion` | How the steps are spaced in time. `polydec` takes smaller steps toward the end, when the graph is nearly clean. | `polydec` |
 
 `graphs` is a list of 10 generated graphs, with their number of atoms drawn from the dataset's overall distribution. They
 are graphs, not molecules yet: step 8 decodes them. This run is all that is required. Every step below is optional and
@@ -108,12 +123,20 @@ the same for every property. The head is the second optional file; fit it as des
 [What you need](#what-you-need).
 
 `FeynmanKacSampler` takes the base, the energy and the same `composition`: the adapter still proposes, and the energy
-selects. `FK_STEERING` holds the recorded settings, `beta` among them. The 10 you ask for are the 10 candidates, and the
-10 you get back.
+selects. Four of its settings are its own and the other four are the sampling settings of step 4, repeated (`FK_STEERING`
+in `defog_adapt.presets` holds the first four as data). The 10 you ask for are the 10 candidates, and the 10 you get
+back.
 
 ```python
 --8<-- "docs/guides/steer_toward_a_target.py:fk_run"
 ```
+
+| Setting | What it does | Recorded |
+|---|---|---|
+| `beta` | How strongly the energy steers: a candidate's weight is `exp(-beta * energy)`. It means the same for every property because the energy is standardised. | 20 |
+| `warmup_frac` | The fraction of the steps that run before the first resampling. Early in the denoising the predicted graph is unreliable, and resampling then would drop candidates that would have turned out well. | 0.6 |
+| `ess_frac` | Resample only when the effective sample size falls below this fraction of the candidates. `None` resamples at every checkpoint. | 0.5 |
+| `resample_scheme` | How the surviving candidates are copied. All three schemes are unbiased and their measured differences were within noise; `residual` has the lowest variance in theory. | `residual` |
 
 `graphs_fk` is a third list of 10 graphs, and the sampler keeps a `trace` of the run for the next step.
 
