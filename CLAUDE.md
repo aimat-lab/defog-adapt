@@ -69,20 +69,34 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   scan **every commit**, not just the tip: the intermediate commits of a port are where leaks hide.
 - **Dependency floors are tested**, not guessed: the suite passes with every dependency at its minimum on
   Python 3.10. Change a floor only by running it.
-- Commits and pushes to the working branch need no go-ahead. Releasing does: tags, TestPyPI and PyPI uploads, making
-  the repository public, merging a pull request.
+- **The PyPI page is the README, with its relative paths made absolute at build time** (hatch-fancy-pypi-readme, the rules
+  in `pyproject.toml`); the README in the repository keeps them relative. `tests/test_pypi_readme.py` builds the wheel and
+  checks the description it carries. A new kind of path in the README (a reference-style link, say) needs a rule.
+- Commits and pushes to the working branch need no go-ahead. Releasing does: tags, PyPI uploads, making the repository
+  public, merging a pull request.
 
 ## Releasing
 
-Nothing publishes by accident: the workflow in `.github/workflows/release.yml` needs a `v*` tag for the real index
-and uses PyPI **Trusted Publishing** (no API token exists). One-time setup, on the maintainer's side:
+Nothing publishes by accident. A pushed `v*` tag runs `.github/workflows/release.yml`, which builds the sdist and the
+wheel, checks them with `twine check` and keeps them as the `dist` artifact of the run; a manual run of the workflow does
+the same and nothing more, so it is the dry run. There is no TestPyPI step: only a PyPI account exists. To release (every
+step that publishes needs the maintainer's go-ahead):
 
-1. On PyPI and TestPyPI, add a *trusted publisher* for the project `defog-adapt`: owner and repository of the GitHub
-   remote, workflow `release.yml`, environments `pypi` and `testpypi` respectively.
-2. In the GitHub repository settings, create the environments `testpypi` and `pypi` and give each a required reviewer.
-3. To release: set `version` in `pyproject.toml` (and `CITATION.cff`), move the changelog entry out of "unreleased",
-   run the gates (unit suite, floors, parity, `tests/test_recipes.py`), push, run the workflow manually (TestPyPI
-   only), check the upload, then push the `v<version>` tag.
+1. Set `version` in `pyproject.toml` and `CITATION.cff` (with its `date-released`) and date the top entry of
+   `CHANGELOG.md`; `tests/test_release_metadata.py` checks that they agree.
+2. Run the gates: the unit suite, the minimum-versions job in CI, the parity gate and `tests/test_recipes.py`.
+3. Merge to `main`, wait for CI, then push the tag `v<version>` on that commit.
+4. Upload what the tag's run built, so that PyPI gets the files CI checked: `gh run download <run-id> -n dist -D dist`,
+   then `uv publish dist/*`, which reads the maintainer's PyPI token from `UV_PUBLISH_TOKEN`. (The first upload of a
+   project needs an account-wide token, because a project-scoped one cannot exist yet: scope it to the project after.)
+5. Look at the project page on PyPI, and install the release into a clean environment.
+
+PyPI **Trusted Publishing** is the alternative to the token, and the job `publish-pypi` of the workflow is for it. It is
+dormant: it runs only when the repository variable `PYPI_TRUSTED_PUBLISHING` is `true`. Set it up once, on the maintainer's
+side: on PyPI add a *trusted publisher* for the project `defog-adapt` (this repository, workflow `release.yml`,
+environment `pypi`), create the GitHub environment `pypi` with a required reviewer (possible for a public repository on
+the free plan), and set the variable. From then on a tag push builds, waits for the reviewer and publishes, and the token
+can be deleted.
 
 ## Behaviour notes that matter
 

@@ -2,8 +2,9 @@
 
 Workflows cannot be run here, so what is checked is the part that can be: that they parse, that the
 floors job is generated from ``pyproject.toml`` (and so cannot drift from it), and that the release
-workflow has the properties that make publishing safe: a tag is required for the real index, no API
-token exists anywhere, and a manual run can only reach the test index.
+workflow has the properties that make publishing safe: a tag is required to reach the index, a manual
+run publishes nothing, no API token exists anywhere, and the publishing job stays dormant until
+Trusted Publishing has been set up.
 """
 
 import importlib.util
@@ -96,26 +97,39 @@ def test_the_floors_script_converts_lower_bounds_and_ignores_the_rest():
 
 
 # ============================================================ release
-def test_a_release_needs_a_tag_and_a_manual_run_can_only_reach_the_test_index():
+def test_a_release_needs_a_tag_and_a_manual_run_publishes_nothing():
     release = workflow("release")
     assert release["triggers"]["push"]["tags"] == ["v*"]
-    manual = release["triggers"]["workflow_dispatch"]["inputs"]["target"]
-    assert manual["options"] == ["testpypi"], "a manual run must never be able to publish for real"
-    assert release["jobs"]["publish-pypi"]["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    assert release["jobs"]["publish-pypi"]["needs"] == "publish-testpypi", "the test index goes first"
+    assert "workflow_dispatch" in release["triggers"], "a manual run is the dry run of the build"
+    assert set(release["jobs"]) == {"build", "publish-pypi"}, "there is no test index: only a PyPI account exists"
+    publish = release["jobs"]["publish-pypi"]
+    assert "startsWith(github.ref, 'refs/tags/v')" in publish["if"], \
+        "only a pushed tag may reach the index: a manual run is on a branch and must never publish"
+    assert publish["needs"] == "build"
+
+
+def test_publishing_is_dormant_until_trusted_publishing_is_set_up():
+    condition = workflow("release")["jobs"]["publish-pypi"]["if"]
+    assert "vars.PYPI_TRUSTED_PUBLISHING == 'true'" in condition, \
+        "until a trusted publisher exists on PyPI the job could only fail, so it must not run before the variable says so"
 
 
 def test_publishing_uses_trusted_publishing_and_no_stored_credentials():
     release = workflow("release")
-    for job in ("publish-testpypi", "publish-pypi"):
-        assert release["jobs"][job]["permissions"] == {"id-token": "write"}
-        assert "environment" in release["jobs"][job], "protect each environment with a required reviewer"
+    publish = release["jobs"]["publish-pypi"]
+    assert publish["permissions"] == {"id-token": "write"}
+    assert "environment" in publish, "protect the environment with a required reviewer"
+    assert release["permissions"] == {"contents": "read"}, "everything but the publishing job gets read access only"
+    action = next(s for s in publish["steps"] if "gh-action-pypi-publish" in s.get("uses", ""))
+    assert "repository-url" not in action.get("with", {}), "the real index is the default: no other index is configured"
     body = yaml.dump(release)                    # the parsed workflow: comments cannot trip or hide this
     assert "secrets." not in body and "password" not in body and "PYPI_API_TOKEN" not in body, \
         "there must be no API token: Trusted Publishing needs none"
+    assert "test.pypi" not in body, "there is no test index"
 
 
-def test_the_test_index_step_tolerates_a_version_that_already_exists():
-    steps = workflow("release")["jobs"]["publish-testpypi"]["steps"]
-    publish = next(s for s in steps if "gh-action-pypi-publish" in s.get("uses", ""))
-    assert publish["with"]["skip-existing"] is True
+def test_the_build_checks_the_distributions_and_keeps_them_for_the_upload():
+    steps = workflow("release")["jobs"]["build"]["steps"]
+    assert any("twine check dist/*" in s.get("run", "") for s in steps), "a manual run is only a dry run if it checks the build"
+    kept = next(s for s in steps if "upload-artifact" in s.get("uses", ""))
+    assert kept["with"]["name"] == "dist", "the upload, by hand or by the publishing job, takes the artifact called dist"
