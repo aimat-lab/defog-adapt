@@ -2,7 +2,7 @@
 
 A **frozen-base adapter** turns an unconditional DeFoG model into a conditional one without touching the
 unconditional model. This page is the reference for what one is, how it is trained and composed, and the
-ways it can be wrong without raising an error. Measured results are in [results.md](results.md).
+ways it can be wrong without raising an error. Measured results are on [Results and caveats](../about/results-and-caveats.md).
 
 ## What it is
 
@@ -10,6 +10,10 @@ An adapter maps a condition `c` (and the flow time `t`) to per-layer `{scale, sh
 the base transformer's node (`X`), edge (`E`) and global (`y`) streams: gated FiLM, in the style of
 adaLN-Zero. The gate heads are zero-initialised, so **an untrained adapter reproduces the base exactly,
 bit for bit**.
+
+![Diagram of how an adapter plugs in. The target, for example logP = 4, and the flow time go into a small, trained adapter. The adapter sends a scale, a shift and a gate to every layer of the frozen base model. The noisy graph passes through those layers and comes out a little cleaner. The gates start at zero, so an untrained adapter changes nothing.](../assets/diagrams/adapter-modulation.svg)
+
+*How an adapter plugs in. It reads the target and the flow time and gives every layer of the frozen base a scale, a shift and a gate. A schematic of one denoising step.*
 
 Two additions to the FiLM trunk carry the recorded results:
 
@@ -162,4 +166,4 @@ trust**, exactly as you would for any `.pt` file from the internet.
 
 An adapter does not widen what the frozen base can reach: the low end of logP, where steering was weakest, is
 partly the base's reach and partly a wrong atom count that a learned size model recovers. See
-[caveats.md](caveats.md).
+[Results and caveats](../about/results-and-caveats.md#where-steering-does-not-work).

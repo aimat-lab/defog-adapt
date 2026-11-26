@@ -20,6 +20,9 @@ venv/
 # The built documentation site (`mkdocs build`)
 /site/
 
+# Figure documents that the diagram build writes beside its scripts (the scripts are the source)
+/docs/assets/diagrams/src/*.vectorcraft
+
 # Never commit weights, datasets or experiment output. Checkpoints are not distributed with the
 # package; the parity tests read them from $DEFOG_ADAPT_CKPTS.
 *.ckpt

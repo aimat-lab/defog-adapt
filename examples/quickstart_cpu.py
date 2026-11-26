@@ -175,7 +175,7 @@ def main() -> None:
     print(f"[{time.time() - t0:4.0f}s] done.")
     print("Read this as a wiring check, not a result: with a few dozen molecules, a tiny model and "
           f"{n} samples per row,\nthe differences between rows are inside sampling noise (and a head "
-          "this poor is a poor ruler for FK).\nThe recorded numbers, at scale, are in docs/results.md.")
+          "this poor is a poor ruler for FK).\nThe recorded numbers, at scale, are in docs/about/results-and-caveats.md.")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """The README's results figure (docs/assets/results_logp.py) is drawn from a data file, not from numbers in the script.
 
 The point of that: a chart cannot drift from the summary it shows, and the numbers quoted around it (the README's
-alt text, docs/results.md) can be checked against the same file. These tests cover the script's contract with
+alt text, docs/about/results-and-caveats.md) can be checked against the same file. These tests cover the script's contract with
 synthetic numbers (clearly not results); the last one checks the committed data file against the text around it.
 """
 import importlib.util
@@ -120,13 +120,18 @@ def test_the_readme_quotes_the_feynman_kac_numbers_of_the_data_file_in_the_capti
     assert uniqueness in row and f"logP error {arms['xattn']['mae_mean']:.3f} to {arms['xattn_fk']['mae_mean']:.3f}" in row
 
 
-def section_nine():
-    text = (ROOT / "docs" / "results.md").read_text(encoding="utf-8")
-    return text[text.index("## 9."):]
+RESULTS_PAGE = ROOT / "docs" / "about" / "results-and-caveats.md"
+
+
+def headline():
+    """The page's section on the five-approach comparison: from its heading to the next top-level heading."""
+    text = RESULTS_PAGE.read_text(encoding="utf-8")
+    start = text.index("## The headline comparison")
+    return text[start:text.index("\n## ", start + 1)]
 
 
 def test_the_results_table_in_the_docs_is_the_data_file():
-    section = section_nine()
+    section = headline()
     for arm in ARMS:
         a = committed()["arms"][arm]
         row = next(line for line in section.splitlines() if line.startswith(f"| {a['label']} |"))
@@ -135,9 +140,9 @@ def test_the_results_table_in_the_docs_is_the_data_file():
 
 
 def recorded_spread() -> str:
-    """The difference between two trainings of one adapter recipe, as docs/caveats.md records it."""
-    caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
-    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error", caveats).group(1)
+    """The difference between two trainings of one adapter recipe, as the results page records it."""
+    return re.search(r"Two seeds of the same adapter recipe differ by (\d\.\d{3}) in logP error",
+                     RESULTS_PAGE.read_text(encoding="utf-8")).group(1)
 
 
 def gap_to_end_to_end(arm: str) -> float:
@@ -158,17 +163,16 @@ def readme_caption() -> str:
     return results[:results.index("\n## ")]
 
 
-def test_the_caveat_that_names_the_end_to_end_gap_quotes_the_data_file_and_the_side_of_the_spread_each_gap_is_on():
-    arms, spread = committed()["arms"], recorded_spread()
-    caveats = (ROOT / "docs" / "caveats.md").read_text(encoding="utf-8")
-    bullet = caveats[caveats.index("**The model trained end to end had the lowest error"):]
-    bullet = bullet[:bullet.index("\n* **")]
-    for arm in ("conditional", "xattn_fk", "xattn"):
-        assert f"{arms[arm]['mae_mean']:.4f}" in bullet, (arm, bullet)
-    alone, steered = f"{gap_to_end_to_end('xattn'):.3f}", f"{gap_to_end_to_end('xattn_fk'):.3f}"
-    assert float(steered) < float(spread) < float(alone), "the bullet's 'more than' and 'less than' would be wrong"
-    assert f"a gap of {alone}, more than the {spread} recorded" in bullet
-    assert f"a gap of {steered}, less than that" in bullet
+def test_the_first_reading_bullet_puts_each_lead_on_its_side_of_the_recorded_spread():
+    """'Larger than the 0.058' for the adapter alone and 'smaller' for Feynman-Kac must be true of the data file."""
+    spread = recorded_spread()
+    alone, steered = gap_to_end_to_end("xattn"), gap_to_end_to_end("xattn_fk")
+    assert steered < float(spread) < alone, "the bullet's 'larger' and 'smaller' would be wrong"
+    section = " ".join(headline().split())
+    bullet = section[section.index("* The model trained end to end on logP has the lowest error"):section.index("* Measured from")]
+    assert f"is larger than the {spread} recorded between two trainings of one adapter recipe" in bullet
+    assert "is smaller, so this comparison does not order those two" in bullet
+    assert f"the end-to-end model ({steered:.3f})" in section, "the gap that 'do and do not show' quotes is not the data file's"
 
 
 def test_the_readme_caption_quotes_the_gap_to_feynman_kac_and_the_spread_it_is_measured_against():
@@ -188,9 +192,9 @@ def test_the_every_seed_claims_of_the_text_hold_in_the_data_file():
         assert mae["xattn"] < mae["film"] and mae["xattn_fk"] < mae["xattn"], seed
 
 
-def test_the_reading_bullets_of_section_nine_quote_the_paired_differences_and_shares_of_the_data_file():
-    arms, section = committed()["arms"], section_nine()
-    reading = section[section.index("**Reading it.**"):section.index("### Protocol")]
+def test_the_reading_bullets_quote_the_paired_differences_and_shares_of_the_data_file():
+    arms, section = committed()["arms"], headline()
+    reading = section[section.index("**Reading it.**"):section.index("### How it was measured")]
     for a, b in (("xattn_fk", "conditional"), ("xattn", "conditional"), ("film", "xattn"), ("xattn_fk", "xattn")):
         mean, sd = paired(a, b)
         assert f"{abs(mean):.4f} ± {sd:.4f}" in reading, f"{a} against {b}: {abs(mean):.4f} ± {sd:.4f} is not in the bullets"
@@ -207,7 +211,7 @@ def test_no_text_calls_the_end_to_end_model_the_most_accurate_while_its_lead_ove
     gap = gap_to_end_to_end("xattn_fk")
     if gap >= float(recorded_spread()):
         pytest.skip("the lead is larger than the recorded spread, so the plain wording would be supported")
-    for name in ("README.md", "docs/results.md", "docs/caveats.md"):
+    for name in ("README.md", "docs/about/results-and-caveats.md"):
         text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
         for claim in ("most accurate", "more accurate than any"):
             assert claim not in text, f"{name} says {claim!r}, but the lead over Feynman-Kac ({gap:.3f}) is inside the spread"

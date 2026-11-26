@@ -3,13 +3,17 @@
 A DeFoG model generates a graph by denoising: it starts from noise and, over many small steps, moves toward a clean
 graph. The **base model** in this package is *unconditional*. It has learned what molecules look like, not which ones
 have a given logP. defog-adapt leaves it as it is and gives you three ways to steer it. This page says what each one
-is; the [guides](guides/train-an-adapter.md) show how to use them.
+is; the [guides](../guides/train-an-adapter.md) show how to use them.
 
 | Tool | What it changes | When it acts |
 |---|---|---|
 | [Adapter](#adapters) | Nothing in the base. A small module is trained beside it. | Training, once per property; then at every sampling step. |
 | [Feynman-Kac steering](#feynman-kac-steering) | Nothing: the generator is neither trained nor changed. | Sampling time only. |
 | [RL fine-tuning](#rl-fine-tuning) | The weights of the base model or of an adapter. | Training. Sampling afterwards needs no reward. |
+
+![Diagram of the recorded pipeline, from left to right. Training has four steps: train the base model, which is unconditional; optionally clean it up with two rounds of RL; train one adapter per property while the base stays frozen; and optionally tighten the adapter with RL. Sampling has two: sample with the adapter steering the frozen base at every step, and optionally add Feynman-Kac steering, which resamples the candidates. Optional steps are drawn as dashed frames.](../assets/diagrams/recorded-pipeline.svg)
+
+*The recorded pipeline, step by step. Dashed frames are optional steps. A snowflake marks weights that stay frozen and ΔW weights that change. A schematic of the order of the steps, not a measurement.*
 
 ## Adapters
 
@@ -38,7 +42,7 @@ Accuracy is the other price. In the recorded comparison, a model trained end to 
 logP error than an adapter alone. The adapter gets most of the way there, Feynman-Kac steering brings it closer, and it
 leaves the base reusable for every other property.
 
-Details: [adapters.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/adapters.md).
+Details: [Adapters](adapters.md).
 
 ## Feynman-Kac steering
 
@@ -57,7 +61,7 @@ Two things matter in practice:
 - **Read the trace.** A run that never resamples is the unguided sampler with extra forward passes, and no error
   metric will tell you. `FeynmanKacSampler.trace` says whether the steering engaged.
 
-Details: [steering.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/steering.md).
+Details: [Steering at sampling time](steering.md).
 
 ## RL fine-tuning
 
@@ -76,20 +80,19 @@ There are two uses, with one estimator:
 A run can collapse after it peaks, and a reward can be raised by narrowing the distribution. So keep the best
 checkpoint rather than the last one, and check the quality of the whole distribution, not just the reward.
 
-Details: [rl.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/rl.md).
+Details: [Reinforcement learning](rl.md).
 
 ## How they fit together
 
 The recorded pipeline trains a base model, cleans it up with two rounds of structural RL, trains one adapter per
 property on that base, and then samples with the adapter and Feynman-Kac steering. Tightening an adapter by RL is an
-optional extra step. The [recipes](reference/recipes.md) are these steps as scripts.
+optional extra step. The [recipes](../reference/recipes.md) are these steps as scripts.
 
 Adapters and Feynman-Kac steering stack: the adapter proposes, and the energy selects. The gains from RL and from
 Feynman-Kac steering do **not** add up.
 
 ## Where the evidence is
 
-This site is the short version. Every measured number, with its protocol, is in
-[results.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/results.md), and the ways each tool can be wrong
-without raising an error are in [caveats.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/caveats.md).
-Read both before relying on a gain. See also the [limits](about/limits.md).
+Every number this site quotes for the headline comparison, with its protocol, and the ways each tool can be wrong
+without raising an error are on [Results and caveats](../about/results-and-caveats.md). Read it before relying on a gain. See also the
+[limits](../about/limits.md).

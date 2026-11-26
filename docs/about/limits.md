@@ -1,8 +1,7 @@
 # Limits
 
 What this package does not do, and where it can go wrong without raising an error. The detailed list, with the
-evidence behind each item, is in
-[caveats.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/caveats.md).
+evidence behind each item, is on [Results and caveats](results-and-caveats.md).
 
 - **Molecules are the validated domain.** The core is ordinary graph code, but nothing else has been measured.
 - **A few scalar properties.** The recipes train adapters for logP, TPSA, QED and SAScore. Feynman-Kac steering is
@@ -26,5 +25,5 @@ evidence behind each item, is in
   can raise its reward while the distribution narrows. Read the sampler's trace, and check the whole distribution, not
   one number.
 
-Every measured number, with its protocol and what it does not support, is in
-[results.md](https://github.com/aimat-lab/defog-adapt/blob/main/docs/results.md).
+Every measured number, with its protocol and what it does not support, is on
+[Results and caveats](results-and-caveats.md).

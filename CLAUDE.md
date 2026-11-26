@@ -18,10 +18,12 @@ purpose. Do not re-add a feature without evidence that it works, and say what th
 - `tests/` CPU-only unit tests; `tests/parity/` opt-in comparison against golden outputs of the research repo;
   `tests/test_recipes.py` opt-in smoke runs of every recipe
 - `examples/` the quickstart, the PyComex recipes (optional `recipes` extra) and `steer_zinc.py`, the assembly
-- `docs/` adapters, steering, rl, results, caveats, migration
-- `mkdocs.yml`, `docs/{index,getting-started,concepts}.md`, `docs/{guides,reference,about}/` the documentation site
-  (Material for MkDocs): the short, high-level version. The six detailed notes above are excluded from it on purpose,
-  and code on its pages is included from the README and the notes by `--8<--` markers, never copied
+- `docs/` the documentation: Home and Getting started, `concepts/` (overview, adapters, steering, RL), `guides/`,
+  `reference/` (main classes, recipes, migration) and `about/` (limits, results and caveats, contributing, citation)
+- `mkdocs.yml` the documentation site (Material for MkDocs). Every page of `docs/` is in its nav, and code on its pages is
+  included from the README, `docs/concepts/adapters.md` and the three tutorial scripts in `docs/guides/`
+  (`train_an_unconditional_base.py`, `train_an_adapter.py`, `steer_toward_a_target.py`: the one copy of a tutorial's code,
+  shown in pieces by section and in full at the end of its page) by `--8<--` markers, never copied
 
 ## Commands
 
@@ -48,10 +50,13 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   code under test, not the test. A test that cannot fail is not a test; this found more than one vacuous one.
 - **Examples must run.** A recipe that is not run has already rotted. Keep `tests/test_recipes.py` green when
   the library API changes, and assert on a recipe's own output, not on PyComex's banner (it varies by version).
-- **Documentation is tested.** `tests/test_docs.py` parses every code block, checks every `defog_adapt` import
-  in one and every link and anchor. Every number in `docs/results.md` needs a source and its protocol.
-- **The site stays the short version.** A new page goes in the nav of `mkdocs.yml`, detail stays in the notes, and a
-  number on the site has the same source as in `docs/results.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
+- **Documentation is tested.** `tests/test_docs.py` parses every code block (an include is expanded first), checks every
+  `defog_adapt` import in one and every link and anchor. The tutorials are tested by `tests/test_tutorial_*.py` (and
+  `test_steer_tutorial.py`): the structure of each page, every written-out setting against its preset and its table, the
+  three scripts run one after the other on tiny data, and the style of the code (no line over 88 characters, a call with
+  four or more arguments one per line). Every number on `docs/about/results-and-caveats.md` needs a source and its protocol.
+- **The site is the documentation.** Every page of `docs/` is in the nav of `mkdocs.yml`, and a number on any page has
+  the same source as on `docs/about/results-and-caveats.md`. `mkdocs build --strict` (group `docs`, no PyTorch) and
   `tests/test_docs_site.py` guard the nav, the exclusions, the includes and the config. Keep the config portable (no
   hooks, no plugin beyond search, publish through the Pages artifact flow, never `gh-deploy`): Material for MkDocs
   ends on 2027-05-05 and its successor reads the same file. Publishing is dormant until the repository is public.
@@ -64,20 +69,34 @@ recipes need PyComex (`pip install pycomex`), which caps `numpy<2`, so run them 
   scan **every commit**, not just the tip: the intermediate commits of a port are where leaks hide.
 - **Dependency floors are tested**, not guessed: the suite passes with every dependency at its minimum on
   Python 3.10. Change a floor only by running it.
-- Commits and pushes to the working branch need no go-ahead. Releasing does: tags, TestPyPI and PyPI uploads, making
-  the repository public, merging a pull request.
+- **The PyPI page is the README, with its relative paths made absolute at build time** (hatch-fancy-pypi-readme, the rules
+  in `pyproject.toml`); the README in the repository keeps them relative. `tests/test_pypi_readme.py` builds the wheel and
+  checks the description it carries. A new kind of path in the README (a reference-style link, say) needs a rule.
+- Commits and pushes to the working branch need no go-ahead. Releasing does: tags, PyPI uploads, making the repository
+  public, merging a pull request.
 
 ## Releasing
 
-Nothing publishes by accident: the workflow in `.github/workflows/release.yml` needs a `v*` tag for the real index
-and uses PyPI **Trusted Publishing** (no API token exists). One-time setup, on the maintainer's side:
+Nothing publishes by accident. A pushed `v*` tag runs `.github/workflows/release.yml`, which builds the sdist and the
+wheel, checks them with `twine check` and keeps them as the `dist` artifact of the run; a manual run of the workflow does
+the same and nothing more, so it is the dry run. There is no TestPyPI step: only a PyPI account exists. To release (every
+step that publishes needs the maintainer's go-ahead):
 
-1. On PyPI and TestPyPI, add a *trusted publisher* for the project `defog-adapt`: owner and repository of the GitHub
-   remote, workflow `release.yml`, environments `pypi` and `testpypi` respectively.
-2. In the GitHub repository settings, create the environments `testpypi` and `pypi` and give each a required reviewer.
-3. To release: set `version` in `pyproject.toml` (and `CITATION.cff`), move the changelog entry out of "unreleased",
-   run the gates (unit suite, floors, parity, `tests/test_recipes.py`), push, run the workflow manually (TestPyPI
-   only), check the upload, then push the `v<version>` tag.
+1. Set `version` in `pyproject.toml` and `CITATION.cff` (with its `date-released`) and date the top entry of
+   `CHANGELOG.md`; `tests/test_release_metadata.py` checks that they agree.
+2. Run the gates: the unit suite, the minimum-versions job in CI, the parity gate and `tests/test_recipes.py`.
+3. Merge to `main`, wait for CI, then push the tag `v<version>` on that commit.
+4. Upload what the tag's run built, so that PyPI gets the files CI checked: `gh run download <run-id> -n dist -D dist`,
+   then `uv publish dist/*`, which reads the maintainer's PyPI token from `UV_PUBLISH_TOKEN`. (The first upload of a
+   project needs an account-wide token, because a project-scoped one cannot exist yet: scope it to the project after.)
+5. Look at the project page on PyPI, and install the release into a clean environment.
+
+PyPI **Trusted Publishing** is the alternative to the token, and the job `publish-pypi` of the workflow is for it. It is
+dormant: it runs only when the repository variable `PYPI_TRUSTED_PUBLISHING` is `true`. Set it up once, on the maintainer's
+side: on PyPI add a *trusted publisher* for the project `defog-adapt` (this repository, workflow `release.yml`,
+environment `pypi`), create the GitHub environment `pypi` with a required reviewer (possible for a public repository on
+the free plan), and set the variable. From then on a tag push builds, waits for the reviewer and publishes, and the token
+can be deleted.
 
 ## Behaviour notes that matter
 

@@ -1,20 +1,20 @@
 name: Release
 
-# Publishing is deliberately NOT automatic on every push. It needs a version tag, and both indexes use
-# PyPI Trusted Publishing (OpenID Connect): there is no API token anywhere in this repository or its secrets.
-# Set the trusted publisher on the project's PyPI / TestPyPI settings page, and protect the two GitHub
-# environments below with a required reviewer so that a release always waits for a human.
-
+# Nothing here publishes by accident. A pushed version tag (v*) builds the sdist and the wheel, checks them with
+# `twine check` and keeps them as the `dist` artifact of the run; a manual run does the same and nothing more, so it is
+# a dry run of the build. There is no test index: only the maintainer's PyPI account exists.
+#
+# Uploading is a decision of the maintainer. Either upload the run's `dist` artifact by hand (gh run download, then
+# uv publish with the maintainer's PyPI token), or let the job below do it with PyPI Trusted Publishing (OpenID
+# Connect, no token in this repository or its secrets). The job is dormant until all three are set up:
+#   1. on PyPI, a trusted publisher for the project defog-adapt: this repository, workflow release.yml, environment pypi
+#   2. in the repository settings, the environment `pypi`, protected by a required reviewer so that a release waits
+#      for a human
+#   3. the repository variable PYPI_TRUSTED_PUBLISHING set to "true"
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      target:
-        description: "Where to publish (a manual run never goes to the real index)"
-        type: choice
-        options: [testpypi]
-        default: testpypi
 
 permissions:
   contents: read
@@ -36,34 +36,16 @@ jobs:
           name: dist
           path: dist/
 
-  publish-testpypi:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/defog-adapt
-    permissions:
-      id-token: write            # Trusted Publishing: the OIDC token, not a stored secret
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          skip-existing: true        # a dry run may already have uploaded this version
-
   publish-pypi:
-    # Only a pushed version tag reaches the real index, and only after the TestPyPI upload succeeded.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: publish-testpypi
+    # Only a pushed version tag reaches the index (a manual run is on a branch), and only once Trusted Publishing is set up.
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHING == 'true'
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/defog-adapt
     permissions:
-      id-token: write
+      id-token: write            # Trusted Publishing: the OIDC token, not a stored secret
     steps:
       - uses: actions/download-artifact@v4
         with:

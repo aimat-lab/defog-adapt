@@ -40,7 +40,7 @@ At the end it evaluates single-property steering: it steers to the 5th and 95th 
 property and reports the achieved mean, the error to the target and the validity, over a guidance-
 weight sweep, with the dataset distribution and the generated one plotted together. That is a quick
 check on one run, not the 100-target benchmark protocol the recorded results were measured with
-(see docs/results.md).
+(see docs/about/results-and-caveats.md).
 """
 import json
 import os

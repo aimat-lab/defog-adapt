@@ -88,8 +88,8 @@ as before; use `presets.E1_MODEL`.
 * **Heads and size models** (`PropertyHead`, `LearnedSizeDistribution`) load as before.
 * **Config keys** that are accepted today stay accepted: a stored `interior_ff: false` is read and ignored.
 * **Do not trust the hyperparameters stored in a re-packaged checkpoint.** See
-  [caveats.md](caveats.md#the-adapter-base-is-a-re-packaged-checkpoint).
-* Checkpoints are pickles. Only load ones you trust ([adapters.md](adapters.md#file-format-compatibility-and-trust)).
+  [Results and caveats](../about/results-and-caveats.md#the-adapter-base-is-a-re-packaged-checkpoint).
+* Checkpoints are pickles. Only load ones you trust ([Adapters](../concepts/adapters.md#file-format-compatibility-and-trust)).
 
 ## Reference data
 
