@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-26)
 
 First release: a standalone port of the `defog/` package of a research fork of
 [DeFoG](https://arxiv.org/abs/2410.04263), keeping only features with a recorded positive result.

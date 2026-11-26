@@ -265,6 +265,10 @@ graphs = sampler.sample(10, size_dist=size, condition=torch.full((10, 1), target
 
 ## 📚 Documentation
 
+The documentation is a site, [aimat-lab.github.io/defog-adapt](https://aimat-lab.github.io/defog-adapt/): the concepts,
+a tutorial for each step from a base model to a steered run, and the reference. Its pages are the files in
+[`docs/`](docs/), and these are the ones to start from:
+
 | | |
 |---|---|
 | [`docs/concepts/adapters.md`](docs/concepts/adapters.md) | what an adapter is; training, composing, the label convention, the file format |

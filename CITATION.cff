@@ -7,7 +7,8 @@ authors:
     given-names: Jonas
 license: MIT
 repository-code: "https://github.com/aimat-lab/defog-adapt"
-version: "0.1.0.dev0"
+version: "0.1.0"
+date-released: "2026-11-26"
 references:
   - type: conference-paper
     title: "DeFoG: Discrete Flow Matching for Graph Generation"
